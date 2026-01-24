@@ -167,6 +167,54 @@ export type Database = {
           },
         ]
       }
+      student_problem_status: {
+        Row: {
+          accepted_at: string | null
+          created_at: string
+          id: string
+          is_locked: boolean
+          opened_at: string
+          problem_id: string
+          session_id: string
+          wrong_attempts: number
+        }
+        Insert: {
+          accepted_at?: string | null
+          created_at?: string
+          id?: string
+          is_locked?: boolean
+          opened_at?: string
+          problem_id: string
+          session_id: string
+          wrong_attempts?: number
+        }
+        Update: {
+          accepted_at?: string | null
+          created_at?: string
+          id?: string
+          is_locked?: boolean
+          opened_at?: string
+          problem_id?: string
+          session_id?: string
+          wrong_attempts?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "student_problem_status_problem_id_fkey"
+            columns: ["problem_id"]
+            isOneToOne: false
+            referencedRelation: "problems"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "student_problem_status_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "student_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       student_sessions: {
         Row: {
           contest_id: string
