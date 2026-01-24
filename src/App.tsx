@@ -9,6 +9,7 @@ import AdminLogin from "./pages/admin/AdminLogin";
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import CreateContest from "./pages/admin/CreateContest";
 import StudentEntry from "./pages/student/StudentEntry";
+import ContestPage from "./pages/contest/ContestPage";
 
 const queryClient = new QueryClient();
 
@@ -24,6 +25,7 @@ const App = () => (
           <Route path="/admin/dashboard" element={<AdminDashboard />} />
           <Route path="/admin/contest/new" element={<CreateContest />} />
           <Route path="/student/entry" element={<StudentEntry />} />
+          <Route path="/contest/:contestId" element={<ContestPage />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>
