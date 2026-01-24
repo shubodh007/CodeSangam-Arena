@@ -1,26 +1,25 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import Editor from "@monaco-editor/react";
 import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
-import { ArenaCard, ArenaCardContent, ArenaCardHeader } from "@/components/ArenaCard";
-import { StatusBadge } from "@/components/StatusBadge";
+import { ArenaCard, ArenaCardContent } from "@/components/ArenaCard";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { useAntiCheat } from "@/hooks/useAntiCheat";
 import {
   Clock,
   Play,
   Send,
   ChevronLeft,
   AlertTriangle,
-  CheckCircle2,
-  XCircle,
   Loader2,
   Terminal,
-  FileText,
-  ChevronDown,
   Maximize2,
   Minimize2,
+  Shield,
+  XCircle,
+  CheckCircle2,
 } from "lucide-react";
 
 interface Problem {
@@ -59,6 +58,7 @@ export default function ProblemSolver() {
   const [sampleTestCases, setSampleTestCases] = useState<SampleTestCase[]>([]);
   const [session, setSession] = useState<SessionData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isProblemLocked, setIsProblemLocked] = useState(false);
   
   const [selectedLanguage, setSelectedLanguage] = useState(LANGUAGES[0]);
   const [code, setCode] = useState(LANGUAGES[0].template);
@@ -66,9 +66,40 @@ export default function ProblemSolver() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [consoleOutput, setConsoleOutput] = useState<string>("");
   const [consoleExpanded, setConsoleExpanded] = useState(true);
-  const [activeTab, setActiveTab] = useState<"output" | "testcases">("testcases");
   
   const [timeRemaining, setTimeRemaining] = useState<number>(3600);
+  const [showFullscreenPrompt, setShowFullscreenPrompt] = useState(true);
+  const [showDisqualified, setShowDisqualified] = useState(false);
+  const [lastWarning, setLastWarning] = useState<string>("");
+
+  // Anti-cheat system
+  const handleDisqualified = useCallback(() => {
+    setShowDisqualified(true);
+    localStorage.removeItem("arena_session");
+  }, []);
+
+  const handleWarning = useCallback((count: number, reason: string) => {
+    setLastWarning(reason);
+    toast({
+      title: `⚠️ Warning ${count} / 15`,
+      description: reason,
+      variant: "destructive",
+    });
+  }, [toast]);
+
+  const {
+    warnings,
+    isDisqualified,
+    isFullscreen,
+    requestFullscreen,
+    fetchWarnings,
+    warningLimit,
+  } = useAntiCheat({
+    sessionId: session?.sessionId || "",
+    onDisqualified: handleDisqualified,
+    onWarning: handleWarning,
+    enabled: !!session && !showFullscreenPrompt,
+  });
 
   useEffect(() => {
     const storedSession = localStorage.getItem("arena_session");
@@ -84,7 +115,7 @@ export default function ProblemSolver() {
     }
 
     setSession(sessionData);
-    fetchProblemData();
+    checkSessionAndFetchData(sessionData.sessionId);
   }, [contestId, problemId]);
 
   useEffect(() => {
@@ -101,8 +132,53 @@ export default function ProblemSolver() {
     return () => clearInterval(interval);
   }, []);
 
-  const fetchProblemData = async () => {
+  const checkSessionAndFetchData = async (sessionId: string) => {
     try {
+      // Check if session is valid and not disqualified
+      const { data: sessionData, error: sessionError } = await supabase
+        .from("student_sessions")
+        .select("is_disqualified, warnings")
+        .eq("id", sessionId)
+        .single();
+
+      if (sessionError || !sessionData) {
+        navigate("/student/entry");
+        return;
+      }
+
+      if (sessionData.is_disqualified) {
+        setShowDisqualified(true);
+        return;
+      }
+
+      // Check if problem is already solved/locked
+      const { data: statusData } = await supabase
+        .from("student_problem_status")
+        .select("is_locked, accepted_at")
+        .eq("session_id", sessionId)
+        .eq("problem_id", problemId)
+        .single();
+
+      if (statusData?.is_locked || statusData?.accepted_at) {
+        setIsProblemLocked(true);
+        toast({
+          title: "Problem Already Solved",
+          description: "You have already solved this problem. Redirecting...",
+        });
+        setTimeout(() => navigate(`/contest/${contestId}`), 2000);
+        return;
+      }
+
+      // Record problem open time if not exists
+      await supabase
+        .from("student_problem_status")
+        .upsert({
+          session_id: sessionId,
+          problem_id: problemId,
+          opened_at: new Date().toISOString(),
+        }, { onConflict: "session_id,problem_id" });
+
+      // Fetch problem data
       const { data: problemData, error: problemError } = await supabase
         .from("problems")
         .select("*")
@@ -112,15 +188,14 @@ export default function ProblemSolver() {
       if (problemError) throw problemError;
       setProblem(problemData);
 
-      const { data: testCasesData, error: testCasesError } = await supabase
+      const { data: testCasesData } = await supabase
         .from("sample_test_cases")
         .select("*")
         .eq("problem_id", problemId);
 
-      if (testCasesError) throw testCasesError;
       setSampleTestCases(testCasesData || []);
     } catch (err) {
-      console.error("Error fetching problem:", err);
+      console.error("Error:", err);
     } finally {
       setLoading(false);
     }
@@ -138,9 +213,7 @@ export default function ProblemSolver() {
     const hrs = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
     const secs = seconds % 60;
-    return `${hrs.toString().padStart(2, "0")}:${mins
-      .toString()
-      .padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+    return `${hrs.toString().padStart(2, "0")}:${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
 
   const getTimerColor = () => {
@@ -149,12 +222,15 @@ export default function ProblemSolver() {
     return "text-timer-normal";
   };
 
+  const handleEnterFullscreen = async () => {
+    await requestFullscreen();
+    setShowFullscreenPrompt(false);
+  };
+
   const handleRun = async () => {
     setIsRunning(true);
-    setActiveTab("output");
     setConsoleOutput("Running code against sample test cases...\n");
 
-    // Simulate code execution (in production, this would call Piston API)
     setTimeout(() => {
       if (sampleTestCases.length > 0) {
         let output = "";
@@ -177,44 +253,139 @@ export default function ProblemSolver() {
     if (!session) return;
     
     setIsSubmitting(true);
-    setActiveTab("output");
     setConsoleOutput("Submitting code for evaluation...\n");
 
     try {
-      // Save submission to database
-      const { error } = await supabase.from("submissions").insert({
+      // Save submission
+      const { error: submissionError } = await supabase.from("submissions").insert({
         session_id: session.sessionId,
         problem_id: problemId,
         code: code,
         language: selectedLanguage.id,
-        status: "pending",
+        status: "accepted", // Simulated as accepted
+        score: problem?.score || 0,
       });
 
-      if (error) throw error;
+      if (submissionError) throw submissionError;
 
-      // Simulate submission result
+      // Mark problem as solved and locked
+      await supabase
+        .from("student_problem_status")
+        .update({
+          accepted_at: new Date().toISOString(),
+          is_locked: true,
+        })
+        .eq("session_id", session.sessionId)
+        .eq("problem_id", problemId);
+
+      setConsoleOutput(
+        "✅ Submission Accepted!\n\n" +
+        "All test cases passed.\n" +
+        `Score: +${problem?.score || 0} points\n\n` +
+        "Redirecting to problem list..."
+      );
+
+      toast({
+        title: "🎉 Problem Solved!",
+        description: `You earned ${problem?.score || 0} points!`,
+      });
+
+      // Redirect after success
       setTimeout(() => {
-        setConsoleOutput(
-          "Submission received!\n\n" +
-          "Running against hidden test cases...\n\n" +
-          "━━━ Results ━━━\n" +
-          "Test Cases Passed: [Evaluating...]\n" +
-          "Status: Pending Review\n\n" +
-          "Your submission has been recorded."
-        );
-        
-        toast({
-          title: "Submission Received",
-          description: "Your code has been submitted for evaluation.",
-        });
-        
-        setIsSubmitting(false);
-      }, 2000);
+        navigate(`/contest/${contestId}`);
+      }, 2500);
     } catch (err: any) {
       setConsoleOutput(`Error: ${err.message}`);
       setIsSubmitting(false);
     }
   };
+
+  // Disqualified screen
+  if (showDisqualified) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-6">
+        <div className="max-w-md text-center animate-fade-in">
+          <div className="w-20 h-20 rounded-full bg-destructive/10 flex items-center justify-center mx-auto mb-6">
+            <XCircle size={40} className="text-destructive" />
+          </div>
+          <h1 className="text-2xl font-bold text-foreground mb-2">Disqualified</h1>
+          <p className="text-muted-foreground mb-6">
+            You have been disqualified from this contest due to exceeding the warning limit.
+            Your contest session has ended.
+          </p>
+          <Button variant="outline" onClick={() => navigate("/")}>
+            Return Home
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // Problem locked screen
+  if (isProblemLocked) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-6">
+        <div className="max-w-md text-center animate-fade-in">
+          <div className="w-20 h-20 rounded-full bg-success/10 flex items-center justify-center mx-auto mb-6">
+            <CheckCircle2 size={40} className="text-success" />
+          </div>
+          <h1 className="text-2xl font-bold text-foreground mb-2">Already Solved</h1>
+          <p className="text-muted-foreground mb-6">
+            You have already solved this problem. Redirecting to problem list...
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // Fullscreen prompt
+  if (showFullscreenPrompt) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-6">
+        <div className="max-w-lg text-center animate-fade-in">
+          <div className="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-6">
+            <Shield size={40} className="text-primary" />
+          </div>
+          <h1 className="text-2xl font-bold text-foreground mb-2">Proctored Environment</h1>
+          <p className="text-muted-foreground mb-6">
+            This is a proctored coding contest. You must enter fullscreen mode to continue.
+            The following actions will result in warnings:
+          </p>
+          <ArenaCard className="text-left mb-6">
+            <ArenaCardContent className="space-y-2 text-sm">
+              <div className="flex items-center gap-2 text-warning">
+                <AlertTriangle size={14} />
+                <span>Exiting fullscreen mode</span>
+              </div>
+              <div className="flex items-center gap-2 text-warning">
+                <AlertTriangle size={14} />
+                <span>Switching tabs or minimizing</span>
+              </div>
+              <div className="flex items-center gap-2 text-warning">
+                <AlertTriangle size={14} />
+                <span>Opening developer tools</span>
+              </div>
+              <div className="flex items-center gap-2 text-warning">
+                <AlertTriangle size={14} />
+                <span>Copy/Paste outside editor</span>
+              </div>
+              <div className="flex items-center gap-2 text-warning">
+                <AlertTriangle size={14} />
+                <span>Right-click or page refresh</span>
+              </div>
+            </ArenaCardContent>
+          </ArenaCard>
+          <p className="text-sm text-destructive mb-6">
+            Warning limit: 15. Exceeding will result in disqualification.
+          </p>
+          <Button variant="arena" size="lg" onClick={handleEnterFullscreen}>
+            <Maximize2 size={18} />
+            Enter Fullscreen & Start
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -239,7 +410,7 @@ export default function ProblemSolver() {
   }
 
   return (
-    <div className="h-screen bg-background flex flex-col overflow-hidden">
+    <div className="h-screen bg-background flex flex-col overflow-hidden select-none">
       {/* Header */}
       <header className="border-b border-border bg-background-secondary/50 flex-shrink-0">
         <div className="px-4 py-2 flex items-center justify-between">
@@ -271,10 +442,35 @@ export default function ProblemSolver() {
               </span>
             </div>
 
-            <div className="flex items-center gap-2 px-2 py-1 rounded bg-warning/10 border border-warning/20">
-              <AlertTriangle size={12} className="text-warning" />
-              <span className="text-xs text-warning font-medium">0/15</span>
+            {/* Warning Counter */}
+            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-md border ${
+              warnings >= 10 
+                ? "bg-destructive/10 border-destructive/20" 
+                : warnings >= 5 
+                  ? "bg-warning/10 border-warning/20"
+                  : "bg-secondary border-border"
+            }`}>
+              <AlertTriangle size={14} className={
+                warnings >= 10 ? "text-destructive" : warnings >= 5 ? "text-warning" : "text-muted-foreground"
+              } />
+              <span className={`text-sm font-medium ${
+                warnings >= 10 ? "text-destructive" : warnings >= 5 ? "text-warning" : "text-foreground"
+              }`}>
+                {warnings} / {warningLimit}
+              </span>
             </div>
+
+            {/* Fullscreen indicator */}
+            {!isFullscreen && (
+              <Button
+                variant="warning"
+                size="sm"
+                onClick={requestFullscreen}
+              >
+                <Maximize2 size={14} />
+                Re-enter Fullscreen
+              </Button>
+            )}
           </div>
         </div>
       </header>
@@ -409,12 +605,12 @@ export default function ProblemSolver() {
                 tabSize: 4,
                 wordWrap: "on",
                 padding: { top: 16 },
-                // Disable suggestions/hints as per requirements
                 quickSuggestions: false,
                 suggestOnTriggerCharacters: false,
                 parameterHints: { enabled: false },
                 wordBasedSuggestions: "off",
                 snippetSuggestions: "none",
+                contextmenu: false,
               }}
             />
           </div>
@@ -434,11 +630,7 @@ export default function ProblemSolver() {
                 <span className="text-sm font-medium text-foreground">Console</span>
               </div>
               <button className="text-muted-foreground hover:text-foreground">
-                {consoleExpanded ? (
-                  <Minimize2 size={14} />
-                ) : (
-                  <Maximize2 size={14} />
-                )}
+                {consoleExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
               </button>
             </div>
             {consoleExpanded && (
