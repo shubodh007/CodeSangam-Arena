@@ -229,73 +229,168 @@ export default function ProblemSolver() {
 
   const handleRun = async () => {
     setIsRunning(true);
-    setConsoleOutput("Running code against sample test cases...\n");
+    setConsoleOutput("🔄 Running code against sample test cases...\n");
 
-    setTimeout(() => {
-      if (sampleTestCases.length > 0) {
-        let output = "";
-        sampleTestCases.forEach((tc, index) => {
-          output += `\n━━━ Test Case ${index + 1} ━━━\n`;
-          output += `Input:\n${tc.input}\n\n`;
-          output += `Expected Output:\n${tc.expected_output}\n\n`;
-          output += `Your Output:\n[Code execution simulated]\n`;
-          output += `Status: ⏳ Pending\n`;
+    if (sampleTestCases.length === 0) {
+      setConsoleOutput("No sample test cases available.\n\nTrying to compile your code...");
+      
+      try {
+        const { data, error } = await supabase.functions.invoke("execute-code", {
+          body: {
+            code,
+            language: selectedLanguage.id,
+            input: "",
+            mode: "run",
+          },
         });
-        setConsoleOutput(output);
-      } else {
-        setConsoleOutput("No sample test cases available.\n\nYour code compiled successfully.");
+
+        if (error) throw error;
+
+        if (data.success) {
+          setConsoleOutput(`✅ Code compiled and ran successfully!\n\nOutput:\n${data.output || "(no output)"}`);
+        } else {
+          setConsoleOutput(`❌ ${data.error || "Execution failed"}`);
+        }
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : "Unknown error";
+        setConsoleOutput(`❌ Error: ${errorMessage}`);
       }
       setIsRunning(false);
-    }, 1500);
+      return;
+    }
+
+    let output = "";
+    let allPassed = true;
+
+    for (let i = 0; i < sampleTestCases.length; i++) {
+      const tc = sampleTestCases[i];
+      output += `\n━━━ Test Case ${i + 1} ━━━\n`;
+      output += `Input:\n${tc.input}\n\n`;
+      output += `Expected Output:\n${tc.expected_output}\n\n`;
+      setConsoleOutput(output + `⏳ Running...\n`);
+
+      try {
+        const { data, error } = await supabase.functions.invoke("execute-code", {
+          body: {
+            code,
+            language: selectedLanguage.id,
+            input: tc.input,
+            mode: "run",
+          },
+        });
+
+        if (error) throw error;
+
+        if (data.success) {
+          const normalizedOutput = data.output.trim();
+          const normalizedExpected = tc.expected_output.trim();
+          const passed = normalizedOutput === normalizedExpected;
+          
+          output += `Your Output:\n${data.output || "(no output)"}\n`;
+          output += `Status: ${passed ? "✅ Passed" : "❌ Failed"}\n`;
+          
+          if (!passed) allPassed = false;
+        } else {
+          output += `Error:\n${data.error}\n`;
+          output += `Status: ❌ Error\n`;
+          allPassed = false;
+        }
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : "Unknown error";
+        output += `Error: ${errorMessage}\n`;
+        output += `Status: ❌ Error\n`;
+        allPassed = false;
+      }
+    }
+
+    output += `\n━━━ Summary ━━━\n`;
+    output += allPassed 
+      ? `✅ All ${sampleTestCases.length} sample test cases passed!`
+      : `❌ Some test cases failed. Check your solution.`;
+    
+    setConsoleOutput(output);
+    setIsRunning(false);
   };
 
   const handleSubmit = async () => {
     if (!session) return;
     
     setIsSubmitting(true);
-    setConsoleOutput("Submitting code for evaluation...\n");
+    setConsoleOutput("🔄 Submitting code for evaluation against hidden test cases...\n");
 
     try {
-      // Save submission
-      const { error: submissionError } = await supabase.from("submissions").insert({
-        session_id: session.sessionId,
-        problem_id: problemId,
-        code: code,
-        language: selectedLanguage.id,
-        status: "accepted", // Simulated as accepted
-        score: problem?.score || 0,
+      const { data, error } = await supabase.functions.invoke("execute-code", {
+        body: {
+          code,
+          language: selectedLanguage.id,
+          input: "",
+          mode: "submit",
+          sessionId: session.sessionId,
+          problemId: problemId,
+        },
       });
 
-      if (submissionError) throw submissionError;
+      if (error) throw error;
 
-      // Mark problem as solved and locked
-      await supabase
-        .from("student_problem_status")
-        .update({
-          accepted_at: new Date().toISOString(),
-          is_locked: true,
-        })
-        .eq("session_id", session.sessionId)
-        .eq("problem_id", problemId);
+      if (data.success) {
+        setConsoleOutput(
+          "✅ Submission Accepted!\n\n" +
+          `All ${data.totalTestCases} hidden test cases passed.\n` +
+          `Score: +${data.score} points\n` +
+          `Execution Time: ${data.executionTime}ms\n\n` +
+          "Redirecting to problem list..."
+        );
 
-      setConsoleOutput(
-        "✅ Submission Accepted!\n\n" +
-        "All test cases passed.\n" +
-        `Score: +${problem?.score || 0} points\n\n` +
-        "Redirecting to problem list..."
-      );
+        toast({
+          title: "🎉 Problem Solved!",
+          description: `You earned ${data.score} points!`,
+        });
 
+        // Redirect after success
+        setTimeout(() => {
+          navigate(`/contest/${contestId}`);
+        }, 2500);
+      } else {
+        // Submission failed
+        let statusMessage = "";
+        switch (data.status) {
+          case "wrong_answer":
+            statusMessage = "❌ Wrong Answer";
+            break;
+          case "compilation_error":
+            statusMessage = "❌ Compilation Error";
+            break;
+          case "runtime_error":
+            statusMessage = "❌ Runtime Error";
+            break;
+          default:
+            statusMessage = "❌ Failed";
+        }
+
+        setConsoleOutput(
+          `${statusMessage}\n\n` +
+          `Test Cases Passed: ${data.testCasesPassed}/${data.totalTestCases}\n` +
+          `Failed at: Test Case ${data.failedTestCase}\n\n` +
+          (data.error ? `Error Details:\n${data.error}\n\n` : "") +
+          "Wrong attempts have been recorded."
+        );
+
+        toast({
+          title: statusMessage,
+          description: `Failed at test case ${data.failedTestCase}. Try again!`,
+          variant: "destructive",
+        });
+        
+        setIsSubmitting(false);
+      }
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : "Unknown error";
+      setConsoleOutput(`❌ Error: ${errorMessage}`);
       toast({
-        title: "🎉 Problem Solved!",
-        description: `You earned ${problem?.score || 0} points!`,
+        title: "Submission Error",
+        description: errorMessage,
+        variant: "destructive",
       });
-
-      // Redirect after success
-      setTimeout(() => {
-        navigate(`/contest/${contestId}`);
-      }, 2500);
-    } catch (err: any) {
-      setConsoleOutput(`Error: ${err.message}`);
       setIsSubmitting(false);
     }
   };

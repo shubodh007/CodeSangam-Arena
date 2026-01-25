@@ -8,6 +8,7 @@ import NotFound from "./pages/NotFound";
 import AdminLogin from "./pages/admin/AdminLogin";
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import CreateContest from "./pages/admin/CreateContest";
+import ContestLeaderboard from "./pages/admin/ContestLeaderboard";
 import StudentEntry from "./pages/student/StudentEntry";
 import ContestPage from "./pages/contest/ContestPage";
 import ProblemSolver from "./pages/contest/ProblemSolver";
@@ -25,6 +26,7 @@ const App = () => (
           <Route path="/admin/login" element={<AdminLogin />} />
           <Route path="/admin/dashboard" element={<AdminDashboard />} />
           <Route path="/admin/contest/new" element={<CreateContest />} />
+          <Route path="/admin/contest/:contestId/leaderboard" element={<ContestLeaderboard />} />
           <Route path="/student/entry" element={<StudentEntry />} />
           <Route path="/contest/:contestId" element={<ContestPage />} />
           <Route path="/contest/:contestId/problem/:problemId" element={<ProblemSolver />} />
