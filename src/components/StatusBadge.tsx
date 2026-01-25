@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 import { CheckCircle2, Clock, XCircle, AlertTriangle, Circle } from "lucide-react";
 
-type StatusType = "active" | "inactive" | "accepted" | "pending" | "failed" | "warning";
+type StatusType = "active" | "inactive" | "accepted" | "pending" | "failed" | "warning" | "disqualified";
 
 interface StatusBadgeProps {
   status: StatusType;
@@ -43,6 +43,11 @@ const statusConfig: Record<
     bg: "bg-warning/10 border-warning/20",
     text: "text-warning",
     icon: AlertTriangle,
+  },
+  disqualified: {
+    bg: "bg-destructive/10 border-destructive/20",
+    text: "text-destructive",
+    icon: XCircle,
   },
 };
 
