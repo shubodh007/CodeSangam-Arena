@@ -119,11 +119,12 @@ async function executeCode(
       output: "",
       error: data.message || "Unknown error occurred",
     };
-  } catch (error) {
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
     return {
       success: false,
       output: "",
-      error: `Execution failed: ${error.message}`,
+      error: `Execution failed: ${errorMessage}`,
     };
   }
 }
@@ -311,10 +312,11 @@ serve(async (req) => {
       JSON.stringify({ success: false, error: "Invalid mode" }),
       { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
-  } catch (error) {
+  } catch (error: unknown) {
     console.error("Error:", error);
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
     return new Response(
-      JSON.stringify({ success: false, error: error.message }),
+      JSON.stringify({ success: false, error: errorMessage }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
