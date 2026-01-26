@@ -186,14 +186,13 @@ export function useAntiCheat({
 
     // Keyboard events
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Copy/Cut/Paste
+      // Copy/Cut/Paste - Block EVERYWHERE including Monaco editor
       if ((e.ctrlKey || e.metaKey) && ["c", "v", "x"].includes(e.key.toLowerCase())) {
-        // Allow in code editor (check if target is in monaco editor)
-        const target = e.target as HTMLElement;
-        if (!target.closest(".monaco-editor")) {
-          e.preventDefault();
-          reportViolation(`Keyboard ${e.key.toUpperCase()} detected outside editor`);
-        }
+        e.preventDefault();
+        e.stopPropagation();
+        const action = e.key.toLowerCase() === "c" ? "Copy" : e.key.toLowerCase() === "v" ? "Paste" : "Cut";
+        reportViolation(`${action} attempt detected (Ctrl/Cmd+${e.key.toUpperCase()})`);
+        return;
       }
 
       // DevTools shortcuts
@@ -210,13 +209,10 @@ export function useAntiCheat({
       }
     };
 
-    // Context menu (right-click)
+    // Context menu (right-click) - Block everywhere
     const handleContextMenu = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (!target.closest(".monaco-editor")) {
-        e.preventDefault();
-        reportViolation("Right-click detected");
-      }
+      e.preventDefault();
+      reportViolation("Right-click detected");
     };
 
     // Window resize (split screen detection)
@@ -246,29 +242,20 @@ export function useAntiCheat({
       }
     }, 1000);
 
-    // Copy/Cut/Paste events
+    // Copy/Cut/Paste events - Block everywhere including Monaco
     const handleCopy = (e: ClipboardEvent) => {
-      const target = e.target as HTMLElement;
-      if (!target.closest(".monaco-editor")) {
-        e.preventDefault();
-        reportViolation("Copy attempt detected");
-      }
+      e.preventDefault();
+      reportViolation("Copy attempt detected");
     };
 
     const handlePaste = (e: ClipboardEvent) => {
-      const target = e.target as HTMLElement;
-      if (!target.closest(".monaco-editor")) {
-        e.preventDefault();
-        reportViolation("Paste attempt detected");
-      }
+      e.preventDefault();
+      reportViolation("Paste attempt detected");
     };
 
     const handleCut = (e: ClipboardEvent) => {
-      const target = e.target as HTMLElement;
-      if (!target.closest(".monaco-editor")) {
-        e.preventDefault();
-        reportViolation("Cut attempt detected");
-      }
+      e.preventDefault();
+      reportViolation("Cut attempt detected");
     };
 
     // Add listeners
@@ -305,6 +292,7 @@ export function useAntiCheat({
     isFullscreen: state.isFullscreen,
     requestFullscreen,
     fetchWarnings,
+    reportViolation,
     warningLimit: WARNING_LIMIT,
   };
 }

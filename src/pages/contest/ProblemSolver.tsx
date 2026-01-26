@@ -1,12 +1,13 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import Editor from "@monaco-editor/react";
+import Editor, { type Monaco, type OnMount } from "@monaco-editor/react";
 import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
 import { ArenaCard, ArenaCardContent } from "@/components/ArenaCard";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAntiCheat } from "@/hooks/useAntiCheat";
+import { FullscreenLockOverlay } from "@/components/FullscreenLockOverlay";
 import {
   Clock,
   Play,
@@ -93,6 +94,7 @@ export default function ProblemSolver() {
     isFullscreen,
     requestFullscreen,
     fetchWarnings,
+    reportViolation,
     warningLimit,
   } = useAntiCheat({
     sessionId: session?.sessionId || "",
@@ -100,6 +102,80 @@ export default function ProblemSolver() {
     onWarning: handleWarning,
     enabled: !!session && !showFullscreenPrompt,
   });
+
+  // Editor ref for Monaco instance
+  const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
+
+  // Handle Monaco editor mount - disable clipboard operations
+  const handleEditorMount: OnMount = (editor, monaco) => {
+    editorRef.current = editor;
+
+    // Disable copy command
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyC, () => {
+      reportViolation("Copy attempt blocked in editor");
+    });
+
+    // Disable cut command
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyX, () => {
+      reportViolation("Cut attempt blocked in editor");
+    });
+
+    // Disable paste command
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyV, () => {
+      reportViolation("Paste attempt blocked in editor");
+    });
+
+    // Disable context menu actions
+    editor.addAction({
+      id: "block-copy",
+      label: "Copy (Blocked)",
+      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyC],
+      run: () => {
+        reportViolation("Copy attempt blocked in editor");
+      },
+    });
+
+    // Block drag and drop
+    const editorDomNode = editor.getDomNode();
+    if (editorDomNode) {
+      editorDomNode.addEventListener("drop", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        reportViolation("Drag-and-drop blocked in editor");
+      });
+
+      editorDomNode.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      });
+
+      // Block paste via clipboard events
+      editorDomNode.addEventListener("paste", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        reportViolation("Paste attempt blocked in editor");
+      });
+
+      // Block copy via clipboard events
+      editorDomNode.addEventListener("copy", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        reportViolation("Copy attempt blocked in editor");
+      });
+
+      // Block cut via clipboard events
+      editorDomNode.addEventListener("cut", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        reportViolation("Cut attempt blocked in editor");
+      });
+    }
+  };
+
+  // Handle re-enter fullscreen from lock overlay
+  const handleReenterFullscreen = async () => {
+    await requestFullscreen();
+  };
 
   useEffect(() => {
     const storedSession = localStorage.getItem("arena_session");
@@ -462,11 +538,15 @@ export default function ProblemSolver() {
               </div>
               <div className="flex items-center gap-2 text-warning">
                 <AlertTriangle size={14} />
-                <span>Copy/Paste outside editor</span>
+                <span>Copy/Cut/Paste (blocked everywhere)</span>
               </div>
               <div className="flex items-center gap-2 text-warning">
                 <AlertTriangle size={14} />
-                <span>Right-click or page refresh</span>
+                <span>Right-click or drag-and-drop</span>
+              </div>
+              <div className="flex items-center gap-2 text-warning">
+                <AlertTriangle size={14} />
+                <span>Page refresh or close attempt</span>
               </div>
             </ArenaCardContent>
           </ArenaCard>
@@ -572,6 +652,16 @@ export default function ProblemSolver() {
 
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
+        {/* Fullscreen Lock Overlay - shown when not in fullscreen and anti-cheat is active */}
+        {!isFullscreen && !showFullscreenPrompt && session && (
+          <FullscreenLockOverlay
+            warnings={warnings}
+            warningLimit={warningLimit}
+            lastWarning={lastWarning}
+            onReenterFullscreen={handleReenterFullscreen}
+          />
+        )}
+
         {/* Left Panel - Problem Description */}
         <div className="w-[400px] border-r border-border flex flex-col overflow-hidden">
           <div className="p-4 border-b border-border bg-background-secondary/30">
@@ -648,7 +738,7 @@ export default function ProblemSolver() {
                 variant="arena-secondary"
                 size="sm"
                 onClick={handleRun}
-                disabled={isRunning || isSubmitting}
+                disabled={isRunning || isSubmitting || !isFullscreen}
               >
                 {isRunning ? (
                   <Loader2 size={14} className="animate-spin" />
@@ -661,7 +751,7 @@ export default function ProblemSolver() {
                 variant="arena"
                 size="sm"
                 onClick={handleSubmit}
-                disabled={isRunning || isSubmitting}
+                disabled={isRunning || isSubmitting || !isFullscreen}
               >
                 {isSubmitting ? (
                   <Loader2 size={14} className="animate-spin" />
@@ -680,6 +770,7 @@ export default function ProblemSolver() {
               language={selectedLanguage.monaco}
               value={code}
               onChange={(value) => setCode(value || "")}
+              onMount={handleEditorMount}
               theme="vs-dark"
               options={{
                 fontSize: 14,
@@ -696,7 +787,7 @@ export default function ProblemSolver() {
                 autoClosingBrackets: "always",
                 autoClosingQuotes: "always",
                 autoIndent: "full",
-                formatOnPaste: true,
+                formatOnPaste: false,
                 tabSize: 4,
                 wordWrap: "on",
                 padding: { top: 16 },
@@ -706,6 +797,8 @@ export default function ProblemSolver() {
                 wordBasedSuggestions: "off",
                 snippetSuggestions: "none",
                 contextmenu: false,
+                readOnly: !isFullscreen,
+                dropIntoEditor: { enabled: false },
               }}
             />
           </div>
