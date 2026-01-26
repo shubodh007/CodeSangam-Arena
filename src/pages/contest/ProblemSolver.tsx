@@ -7,6 +7,8 @@ import { ArenaCard, ArenaCardContent } from "@/components/ArenaCard";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAntiCheat } from "@/hooks/useAntiCheat";
+import { useContestTimer } from "@/hooks/useContestTimer";
+import { useRealtimeContest } from "@/hooks/useRealtimeContest";
 import { FullscreenLockOverlay } from "@/components/FullscreenLockOverlay";
 import {
   Clock,
@@ -60,6 +62,7 @@ export default function ProblemSolver() {
   const [session, setSession] = useState<SessionData | null>(null);
   const [loading, setLoading] = useState(true);
   const [isProblemLocked, setIsProblemLocked] = useState(false);
+  const [contestDuration, setContestDuration] = useState(60);
   
   const [selectedLanguage, setSelectedLanguage] = useState(LANGUAGES[0]);
   const [code, setCode] = useState(LANGUAGES[0].template);
@@ -68,9 +71,9 @@ export default function ProblemSolver() {
   const [consoleOutput, setConsoleOutput] = useState<string>("");
   const [consoleExpanded, setConsoleExpanded] = useState(true);
   
-  const [timeRemaining, setTimeRemaining] = useState<number>(3600);
   const [showFullscreenPrompt, setShowFullscreenPrompt] = useState(true);
   const [showDisqualified, setShowDisqualified] = useState(false);
+  const [showContestEnded, setShowContestEnded] = useState(false);
   const [lastWarning, setLastWarning] = useState<string>("");
 
   // Anti-cheat system
@@ -94,7 +97,6 @@ export default function ProblemSolver() {
     isFullscreen,
     requestFullscreen,
     fetchWarnings,
-    reportViolation,
     warningLimit,
   } = useAntiCheat({
     sessionId: session?.sessionId || "",
@@ -103,45 +105,88 @@ export default function ProblemSolver() {
     enabled: !!session && !showFullscreenPrompt,
   });
 
+  // Server-driven contest timer
+  const handleTimeUp = useCallback(() => {
+    setShowContestEnded(true);
+    toast({
+      title: "⏰ Time's Up!",
+      description: "The contest has ended. Your work has been saved.",
+      variant: "destructive",
+    });
+  }, [toast]);
+
+  const {
+    formattedTime,
+    timerColorClass,
+    isExpired,
+    isWarning: timerWarning,
+    isCritical: timerCritical,
+  } = useContestTimer({
+    sessionId: session?.sessionId || "",
+    contestId: contestId || "",
+    durationMinutes: contestDuration,
+    enabled: !!session && !showFullscreenPrompt,
+    onTimeUp: handleTimeUp,
+  });
+
+  // Real-time contest updates
+  const handleContestDeactivated = useCallback(() => {
+    toast({
+      title: "Contest Ended",
+      description: "This contest has been deactivated by the administrator.",
+      variant: "destructive",
+    });
+    setShowContestEnded(true);
+  }, [toast]);
+
+  const { contest: realtimeContest } = useRealtimeContest({
+    contestId: contestId || "",
+    onContestDeactivated: handleContestDeactivated,
+  });
+
+  // Update duration when realtime contest updates
+  useEffect(() => {
+    if (realtimeContest?.duration_minutes) {
+      setContestDuration(realtimeContest.duration_minutes);
+    }
+  }, [realtimeContest]);
+
   // Editor ref for Monaco instance
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
 
-  // Handle Monaco editor mount - disable clipboard operations
+  /**
+   * Handle Monaco editor mount - Production-grade configuration
+   * 
+   * CRITICAL: Copy/Paste/Cut are SILENTLY BLOCKED (no warnings)
+   * This matches LeetCode/SmartInterviews behavior during active contests
+   */
   const handleEditorMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
 
-    // Disable copy command
+    // ====== SILENTLY BLOCK CLIPBOARD OPERATIONS (NO WARNINGS) ======
+    
+    // Override copy command - do nothing
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyC, () => {
-      reportViolation("Copy attempt blocked in editor");
+      // Silently blocked - no warning, no action
     });
 
-    // Disable cut command
+    // Override cut command - do nothing
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyX, () => {
-      reportViolation("Cut attempt blocked in editor");
+      // Silently blocked - no warning, no action
     });
 
-    // Disable paste command
+    // Override paste command - do nothing
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyV, () => {
-      reportViolation("Paste attempt blocked in editor");
+      // Silently blocked - no warning, no action
     });
 
-    // Disable context menu actions
-    editor.addAction({
-      id: "block-copy",
-      label: "Copy (Blocked)",
-      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyC],
-      run: () => {
-        reportViolation("Copy attempt blocked in editor");
-      },
-    });
-
-    // Block drag and drop
+    // Block via DOM events on editor container
     const editorDomNode = editor.getDomNode();
     if (editorDomNode) {
+      // Block drag and drop silently
       editorDomNode.addEventListener("drop", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        reportViolation("Drag-and-drop blocked in editor");
       });
 
       editorDomNode.addEventListener("dragover", (e) => {
@@ -149,25 +194,20 @@ export default function ProblemSolver() {
         e.stopPropagation();
       });
 
-      // Block paste via clipboard events
+      // Block clipboard events silently
       editorDomNode.addEventListener("paste", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        reportViolation("Paste attempt blocked in editor");
       });
 
-      // Block copy via clipboard events
       editorDomNode.addEventListener("copy", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        reportViolation("Copy attempt blocked in editor");
       });
 
-      // Block cut via clipboard events
       editorDomNode.addEventListener("cut", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        reportViolation("Cut attempt blocked in editor");
       });
     }
   };
@@ -194,26 +234,12 @@ export default function ProblemSolver() {
     checkSessionAndFetchData(sessionData.sessionId);
   }, [contestId, problemId]);
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setTimeRemaining((prev) => {
-        if (prev <= 0) {
-          clearInterval(interval);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, []);
-
   const checkSessionAndFetchData = async (sessionId: string) => {
     try {
       // Check if session is valid and not disqualified
       const { data: sessionData, error: sessionError } = await supabase
         .from("student_sessions")
-        .select("is_disqualified, warnings")
+        .select("is_disqualified, warnings, contest_id")
         .eq("id", sessionId)
         .single();
 
@@ -225,6 +251,21 @@ export default function ProblemSolver() {
       if (sessionData.is_disqualified) {
         setShowDisqualified(true);
         return;
+      }
+
+      // Fetch contest for duration
+      const { data: contestData } = await supabase
+        .from("contests")
+        .select("duration_minutes, is_active")
+        .eq("id", contestId)
+        .single();
+
+      if (contestData) {
+        setContestDuration(contestData.duration_minutes);
+        if (!contestData.is_active) {
+          setShowContestEnded(true);
+          return;
+        }
       }
 
       // Check if problem is already solved/locked
@@ -283,19 +324,6 @@ export default function ProblemSolver() {
       setSelectedLanguage(lang);
       setCode(lang.template);
     }
-  };
-
-  const formatTime = (seconds: number) => {
-    const hrs = Math.floor(seconds / 3600);
-    const mins = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
-    return `${hrs.toString().padStart(2, "0")}:${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
-  };
-
-  const getTimerColor = () => {
-    if (timeRemaining <= 300) return "text-timer-critical";
-    if (timeRemaining <= 900) return "text-timer-warning";
-    return "text-timer-normal";
   };
 
   const handleEnterFullscreen = async () => {
@@ -492,6 +520,26 @@ export default function ProblemSolver() {
     );
   }
 
+  // Contest ended screen
+  if (showContestEnded) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-6">
+        <div className="max-w-md text-center animate-fade-in">
+          <div className="w-20 h-20 rounded-full bg-warning/10 flex items-center justify-center mx-auto mb-6">
+            <Clock size={40} className="text-warning" />
+          </div>
+          <h1 className="text-2xl font-bold text-foreground mb-2">Contest Ended</h1>
+          <p className="text-muted-foreground mb-6">
+            This contest has ended. Thank you for participating.
+          </p>
+          <Button variant="outline" onClick={() => navigate("/")}>
+            Return Home
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   // Problem locked screen
   if (isProblemLocked) {
     return (
@@ -520,39 +568,27 @@ export default function ProblemSolver() {
           <h1 className="text-2xl font-bold text-foreground mb-2">Proctored Environment</h1>
           <p className="text-muted-foreground mb-6">
             This is a proctored coding contest. You must enter fullscreen mode to continue.
-            The following actions will result in warnings:
           </p>
           <ArenaCard className="text-left mb-6">
             <ArenaCardContent className="space-y-2 text-sm">
-              <div className="flex items-center gap-2 text-warning">
-                <AlertTriangle size={14} />
-                <span>Exiting fullscreen mode</span>
+              <div className="flex items-center gap-2 text-foreground-secondary">
+                <Shield size={14} className="text-primary" />
+                <span>Copy/Paste/Cut disabled in editor (typing only)</span>
               </div>
               <div className="flex items-center gap-2 text-warning">
                 <AlertTriangle size={14} />
-                <span>Switching tabs or minimizing</span>
+                <span>Exiting fullscreen, tab switch, minimize = warning</span>
               </div>
               <div className="flex items-center gap-2 text-warning">
                 <AlertTriangle size={14} />
-                <span>Opening developer tools</span>
+                <span>DevTools, right-click outside editor = warning</span>
               </div>
-              <div className="flex items-center gap-2 text-warning">
-                <AlertTriangle size={14} />
-                <span>Copy/Cut/Paste (blocked everywhere)</span>
-              </div>
-              <div className="flex items-center gap-2 text-warning">
-                <AlertTriangle size={14} />
-                <span>Right-click or drag-and-drop</span>
-              </div>
-              <div className="flex items-center gap-2 text-warning">
-                <AlertTriangle size={14} />
-                <span>Page refresh or close attempt</span>
+              <div className="flex items-center gap-2 text-destructive">
+                <XCircle size={14} />
+                <span>15 warnings = automatic disqualification</span>
               </div>
             </ArenaCardContent>
           </ArenaCard>
-          <p className="text-sm text-destructive mb-6">
-            Warning limit: 15. Exceeding will result in disqualification.
-          </p>
           <Button variant="arena" size="lg" onClick={handleEnterFullscreen}>
             <Maximize2 size={18} />
             Enter Fullscreen & Start
@@ -610,11 +646,21 @@ export default function ProblemSolver() {
           </div>
 
           <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <Clock size={16} className={getTimerColor()} />
-              <span className={`font-mono text-sm font-bold ${getTimerColor()}`}>
-                {formatTime(timeRemaining)}
+            {/* Timer - Server-driven with visual warning states */}
+            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-md border transition-all ${
+              timerCritical 
+                ? "bg-destructive/10 border-destructive/30 animate-pulse" 
+                : timerWarning 
+                  ? "bg-warning/10 border-warning/30" 
+                  : "bg-secondary border-border"
+            }`}>
+              <Clock size={16} className={timerColorClass} />
+              <span className={`font-mono text-sm font-bold ${timerColorClass}`}>
+                {formattedTime}
               </span>
+              {timerCritical && (
+                <span className="text-xs text-destructive font-medium">HURRY!</span>
+              )}
             </div>
 
             {/* Warning Counter */}
@@ -738,7 +784,7 @@ export default function ProblemSolver() {
                 variant="arena-secondary"
                 size="sm"
                 onClick={handleRun}
-                disabled={isRunning || isSubmitting || !isFullscreen}
+                disabled={isRunning || isSubmitting || !isFullscreen || isExpired}
               >
                 {isRunning ? (
                   <Loader2 size={14} className="animate-spin" />
@@ -751,7 +797,7 @@ export default function ProblemSolver() {
                 variant="arena"
                 size="sm"
                 onClick={handleSubmit}
-                disabled={isRunning || isSubmitting || !isFullscreen}
+                disabled={isRunning || isSubmitting || !isFullscreen || isExpired}
               >
                 {isSubmitting ? (
                   <Loader2 size={14} className="animate-spin" />
@@ -763,7 +809,7 @@ export default function ProblemSolver() {
             </div>
           </div>
 
-          {/* Monaco Editor */}
+          {/* Monaco Editor - Production Configuration */}
           <div className="flex-1 overflow-hidden">
             <Editor
               height="100%"
@@ -773,32 +819,84 @@ export default function ProblemSolver() {
               onMount={handleEditorMount}
               theme="vs-dark"
               options={{
+                // Font settings
                 fontSize: 14,
                 fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                fontLigatures: true,
+                
+                // Layout
                 minimap: { enabled: false },
                 scrollBeyondLastLine: false,
                 lineNumbers: "on",
                 glyphMargin: false,
-                folding: true,
                 lineDecorationsWidth: 10,
                 lineNumbersMinChars: 3,
+                padding: { top: 16, bottom: 16 },
+                
+                // Code folding and structure
+                folding: true,
+                foldingHighlight: true,
+                foldingStrategy: "indentation",
+                showFoldingControls: "mouseover",
+                
+                // Line and bracket highlighting
                 renderLineHighlight: "line",
+                renderLineHighlightOnlyWhenFocus: false,
                 matchBrackets: "always",
+                bracketPairColorization: { enabled: true },
+                
+                // Auto-close and formatting
                 autoClosingBrackets: "always",
                 autoClosingQuotes: "always",
+                autoClosingDelete: "always",
+                autoSurround: "languageDefined",
                 autoIndent: "full",
                 formatOnPaste: false,
+                formatOnType: false,
+                
+                // Tab and indent
                 tabSize: 4,
+                insertSpaces: true,
+                detectIndentation: true,
+                
+                // Word wrap
                 wordWrap: "on",
-                padding: { top: 16 },
+                wrappingIndent: "same",
+                
+                // DISABLE all suggestions and hints (NO HINTS policy)
                 quickSuggestions: false,
                 suggestOnTriggerCharacters: false,
                 parameterHints: { enabled: false },
                 wordBasedSuggestions: "off",
                 snippetSuggestions: "none",
+                suggest: { enabled: false },
+                inlineSuggest: { enabled: false },
+                
+                // DISABLE context menu (blocked)
                 contextmenu: false,
-                readOnly: !isFullscreen,
+                
+                // Read-only when not in fullscreen
+                readOnly: !isFullscreen || isExpired,
+                
+                // DISABLE drop into editor
                 dropIntoEditor: { enabled: false },
+                
+                // Cursor and selection
+                cursorBlinking: "smooth",
+                cursorSmoothCaretAnimation: "on",
+                cursorWidth: 2,
+                smoothScrolling: true,
+                
+                // Error highlighting only (syntax)
+                renderValidationDecorations: "on",
+                
+                // Scrollbar styling
+                scrollbar: {
+                  vertical: "visible",
+                  horizontal: "visible",
+                  verticalScrollbarSize: 10,
+                  horizontalScrollbarSize: 10,
+                },
               }}
             />
           </div>

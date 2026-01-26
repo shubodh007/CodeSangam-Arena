@@ -6,6 +6,8 @@ import { ArenaCard, ArenaCardContent } from "@/components/ArenaCard";
 import { StatusBadge } from "@/components/StatusBadge";
 import { supabase } from "@/integrations/supabase/client";
 import { useAntiCheat } from "@/hooks/useAntiCheat";
+import { useContestTimer } from "@/hooks/useContestTimer";
+import { useRealtimeContest } from "@/hooks/useRealtimeContest";
 import { useToast } from "@/hooks/use-toast";
 import {
   Clock,
@@ -20,27 +22,12 @@ import {
   Maximize2,
 } from "lucide-react";
 
-interface Problem {
-  id: string;
-  title: string;
-  description: string;
-  score: number;
-  order_index: number;
-}
-
 interface ProblemStatus {
   problem_id: string;
   is_locked: boolean;
   accepted_at: string | null;
   opened_at: string | null;
   wrong_attempts: number;
-}
-
-interface Contest {
-  id: string;
-  title: string;
-  description: string;
-  duration_minutes: number;
 }
 
 interface SessionData {
@@ -54,14 +41,12 @@ export default function ContestPage() {
   const navigate = useNavigate();
   const { toast } = useToast();
   
-  const [contest, setContest] = useState<Contest | null>(null);
-  const [problems, setProblems] = useState<Problem[]>([]);
   const [problemStatuses, setProblemStatuses] = useState<Map<string, ProblemStatus>>(new Map());
   const [session, setSession] = useState<SessionData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [timeRemaining, setTimeRemaining] = useState<number>(0);
   const [showFullscreenPrompt, setShowFullscreenPrompt] = useState(true);
   const [showDisqualified, setShowDisqualified] = useState(false);
+  const [showContestEnded, setShowContestEnded] = useState(false);
 
   // Anti-cheat callbacks
   const handleDisqualified = useCallback(() => {
@@ -89,6 +74,61 @@ export default function ContestPage() {
     enabled: !!session && !showFullscreenPrompt,
   });
 
+  // Real-time contest updates with instant admin changes
+  const handleContestDeactivated = useCallback(() => {
+    toast({
+      title: "Contest Ended",
+      description: "This contest has been deactivated by the administrator.",
+      variant: "destructive",
+    });
+    setShowContestEnded(true);
+  }, [toast]);
+
+  const handleContestUpdated = useCallback((contest: any) => {
+    toast({
+      title: "Contest Updated",
+      description: "The contest has been updated by the administrator.",
+    });
+  }, [toast]);
+
+  const handleProblemsUpdated = useCallback((problems: any[]) => {
+    toast({
+      title: "Problems Updated",
+      description: "The problem list has been updated.",
+    });
+  }, [toast]);
+
+  const { contest, problems, isSubscribed } = useRealtimeContest({
+    contestId: contestId || "",
+    onContestDeactivated: handleContestDeactivated,
+    onContestUpdated: handleContestUpdated,
+    onProblemsUpdated: handleProblemsUpdated,
+  });
+
+  // Server-driven contest timer
+  const handleTimeUp = useCallback(() => {
+    setShowContestEnded(true);
+    toast({
+      title: "⏰ Time's Up!",
+      description: "The contest has ended. Your work has been saved.",
+      variant: "destructive",
+    });
+  }, [toast]);
+
+  const {
+    formattedTime,
+    timerColorClass,
+    isExpired,
+    isWarning: timerWarning,
+    isCritical: timerCritical,
+  } = useContestTimer({
+    sessionId: session?.sessionId || "",
+    contestId: contestId || "",
+    durationMinutes: contest?.duration_minutes || 60,
+    enabled: !!session && !showFullscreenPrompt && !!contest,
+    onTimeUp: handleTimeUp,
+  });
+
   useEffect(() => {
     const storedSession = localStorage.getItem("arena_session");
     if (!storedSession) {
@@ -105,24 +145,6 @@ export default function ContestPage() {
     setSession(sessionData);
     checkSessionAndFetch(sessionData.sessionId);
   }, [contestId]);
-
-  useEffect(() => {
-    if (contest) {
-      setTimeRemaining(contest.duration_minutes * 60);
-
-      const interval = setInterval(() => {
-        setTimeRemaining((prev) => {
-          if (prev <= 0) {
-            clearInterval(interval);
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-
-      return () => clearInterval(interval);
-    }
-  }, [contest]);
 
   const checkSessionAndFetch = async (sessionId: string) => {
     try {
@@ -143,35 +165,14 @@ export default function ContestPage() {
         return;
       }
 
-      await fetchContestData(sessionId);
+      await fetchProblemStatuses(sessionId);
     } catch (err) {
       console.error("Error:", err);
     }
   };
 
-  const fetchContestData = async (sessionId: string) => {
+  const fetchProblemStatuses = async (sessionId: string) => {
     try {
-      // Fetch contest
-      const { data: contestData, error: contestError } = await supabase
-        .from("contests")
-        .select("*")
-        .eq("id", contestId)
-        .single();
-
-      if (contestError) throw contestError;
-      setContest(contestData);
-
-      // Fetch problems
-      const { data: problemsData, error: problemsError } = await supabase
-        .from("problems")
-        .select("*")
-        .eq("contest_id", contestId)
-        .order("order_index", { ascending: true });
-
-      if (problemsError) throw problemsError;
-      setProblems(problemsData || []);
-
-      // Fetch problem statuses
       const { data: statusData } = await supabase
         .from("student_problem_status")
         .select("*")
@@ -185,25 +186,10 @@ export default function ContestPage() {
         setProblemStatuses(statusMap);
       }
     } catch (err) {
-      console.error("Error fetching contest data:", err);
+      console.error("Error fetching problem statuses:", err);
     } finally {
       setLoading(false);
     }
-  };
-
-  const formatTime = (seconds: number) => {
-    const hrs = Math.floor(seconds / 3600);
-    const mins = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
-    return `${hrs.toString().padStart(2, "0")}:${mins
-      .toString()
-      .padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
-  };
-
-  const getTimerColor = () => {
-    if (timeRemaining <= 300) return "text-timer-critical";
-    if (timeRemaining <= 900) return "text-timer-warning";
-    return "text-timer-normal";
   };
 
   const handleExitContest = () => {
@@ -275,6 +261,26 @@ export default function ContestPage() {
     );
   }
 
+  // Contest ended screen
+  if (showContestEnded) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-6">
+        <div className="max-w-md text-center animate-fade-in">
+          <div className="w-20 h-20 rounded-full bg-warning/10 flex items-center justify-center mx-auto mb-6">
+            <Clock size={40} className="text-warning" />
+          </div>
+          <h1 className="text-2xl font-bold text-foreground mb-2">Contest Ended</h1>
+          <p className="text-muted-foreground mb-6">
+            This contest has ended. Thank you for participating.
+          </p>
+          <Button variant="outline" onClick={() => navigate("/")}>
+            Return Home
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   // Fullscreen prompt
   if (showFullscreenPrompt && !loading) {
     return (
@@ -289,13 +295,17 @@ export default function ContestPage() {
           </p>
           <ArenaCard className="text-left mb-6">
             <ArenaCardContent className="space-y-2 text-sm">
-              <div className="flex items-center gap-2 text-warning">
-                <AlertTriangle size={14} />
-                <span>Exiting fullscreen, switching tabs, or minimizing = warning</span>
+              <div className="flex items-center gap-2 text-foreground-secondary">
+                <Shield size={14} className="text-primary" />
+                <span>Copy/Paste/Cut disabled in editor (typing only)</span>
               </div>
               <div className="flex items-center gap-2 text-warning">
                 <AlertTriangle size={14} />
-                <span>Opening DevTools or copy/paste outside editor = warning</span>
+                <span>Exiting fullscreen, tab switch, minimize = warning</span>
+              </div>
+              <div className="flex items-center gap-2 text-warning">
+                <AlertTriangle size={14} />
+                <span>DevTools or right-click = warning</span>
               </div>
               <div className="flex items-center gap-2 text-destructive">
                 <XCircle size={14} />
@@ -312,27 +322,10 @@ export default function ContestPage() {
     );
   }
 
-  if (loading) {
+  if (loading || !contest) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
-  }
-
-  if (!contest) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <AlertTriangle size={48} className="mx-auto mb-4 text-warning" />
-          <h1 className="text-xl font-semibold mb-2">Contest Not Found</h1>
-          <p className="text-muted-foreground mb-4">
-            This contest may have ended or doesn't exist.
-          </p>
-          <Button variant="arena" onClick={() => navigate("/")}>
-            Go Home
-          </Button>
-        </div>
       </div>
     );
   }
@@ -364,12 +357,21 @@ export default function ContestPage() {
               </span>
             </div>
 
-            {/* Timer */}
-            <div className="flex items-center gap-2">
-              <Clock size={18} className={getTimerColor()} />
-              <span className={`font-mono text-lg font-bold ${getTimerColor()}`}>
-                {formatTime(timeRemaining)}
+            {/* Timer - Server-driven with visual warning states */}
+            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-md border transition-all ${
+              timerCritical 
+                ? "bg-destructive/10 border-destructive/30 animate-pulse" 
+                : timerWarning 
+                  ? "bg-warning/10 border-warning/30" 
+                  : "bg-secondary border-border"
+            }`}>
+              <Clock size={18} className={timerColorClass} />
+              <span className={`font-mono text-lg font-bold ${timerColorClass}`}>
+                {formattedTime}
               </span>
+              {timerCritical && (
+                <span className="text-xs text-destructive font-medium">HURRY!</span>
+              )}
             </div>
 
             {/* Warnings */}
@@ -442,6 +444,14 @@ export default function ContestPage() {
             </ArenaCardContent>
           </ArenaCard>
 
+          {/* Real-time indicator */}
+          {isSubscribed && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground mb-4">
+              <span className="w-2 h-2 rounded-full bg-primary animate-pulse" />
+              <span>Live updates enabled</span>
+            </div>
+          )}
+
           {/* Problems List */}
           <div className="mb-6 flex items-center justify-between">
             <h3 className="text-lg font-semibold text-foreground">
@@ -467,8 +477,8 @@ export default function ContestPage() {
                 return (
                   <ArenaCard 
                     key={problem.id} 
-                    hover={!isLocked}
-                    className={isLocked ? "opacity-75" : ""}
+                    hover={!isLocked && !isExpired}
+                    className={isLocked || isExpired ? "opacity-75" : ""}
                   >
                     <ArenaCardContent className="flex items-center justify-between py-4">
                       <div className="flex items-center gap-4">
@@ -498,19 +508,22 @@ export default function ContestPage() {
                               Locked
                             </Button>
                           </>
+                        ) : isExpired ? (
+                          <Button variant="ghost" size="sm" disabled>
+                            <Clock size={14} />
+                            Time's Up
+                          </Button>
                         ) : (
                           <>
-                            <StatusBadge 
-                              status={status === "pending" ? "pending" : "inactive"} 
-                              label={status === "pending" ? "In Progress" : "Not Started"} 
-                              size="sm" 
-                            />
+                            {status === "pending" && (
+                              <StatusBadge status="pending" label="In Progress" size="sm" />
+                            )}
                             <Button
                               variant="arena"
                               size="sm"
                               onClick={() => navigate(`/contest/${contestId}/problem/${problem.id}`)}
                             >
-                              Solve
+                              {status === "pending" ? "Continue" : "Solve"}
                               <ChevronRight size={14} />
                             </Button>
                           </>

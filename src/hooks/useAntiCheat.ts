@@ -186,30 +186,30 @@ export function useAntiCheat({
 
     // Keyboard events
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Copy/Cut/Paste - Block EVERYWHERE including Monaco editor
+      // Copy/Cut/Paste - SILENTLY BLOCK (no warnings for editor actions)
+      // The editor handles these separately, here we just prevent default
       if ((e.ctrlKey || e.metaKey) && ["c", "v", "x"].includes(e.key.toLowerCase())) {
         e.preventDefault();
         e.stopPropagation();
-        const action = e.key.toLowerCase() === "c" ? "Copy" : e.key.toLowerCase() === "v" ? "Paste" : "Cut";
-        reportViolation(`${action} attempt detected (Ctrl/Cmd+${e.key.toUpperCase()})`);
+        // NO warning for copy/paste - silently blocked per requirements
         return;
       }
 
-      // DevTools shortcuts
+      // DevTools shortcuts - these DO get warnings
       if (e.key === "F12" || 
           ((e.ctrlKey || e.metaKey) && e.shiftKey && ["i", "j", "c"].includes(e.key.toLowerCase()))) {
         e.preventDefault();
         reportViolation("DevTools shortcut detected");
       }
 
-      // Refresh
+      // Refresh - this gets a warning
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "r") {
         e.preventDefault();
         reportViolation("Refresh attempt detected");
       }
     };
 
-    // Context menu (right-click) - Block everywhere
+    // Context menu (right-click) - Block with warning
     const handleContextMenu = (e: MouseEvent) => {
       e.preventDefault();
       reportViolation("Right-click detected");
@@ -242,20 +242,20 @@ export function useAntiCheat({
       }
     }, 1000);
 
-    // Copy/Cut/Paste events - Block everywhere including Monaco
+    // Copy/Cut/Paste events - SILENTLY BLOCK (no warnings)
     const handleCopy = (e: ClipboardEvent) => {
       e.preventDefault();
-      reportViolation("Copy attempt detected");
+      // NO warning - silently blocked per requirements
     };
 
     const handlePaste = (e: ClipboardEvent) => {
       e.preventDefault();
-      reportViolation("Paste attempt detected");
+      // NO warning - silently blocked per requirements
     };
 
     const handleCut = (e: ClipboardEvent) => {
       e.preventDefault();
-      reportViolation("Cut attempt detected");
+      // NO warning - silently blocked per requirements
     };
 
     // Add listeners
