@@ -345,6 +345,7 @@ export default function ProblemSolver() {
             language: selectedLanguage.id,
             input: "",
             mode: "run",
+            sessionId: session?.sessionId,
           },
         });
 
@@ -380,6 +381,7 @@ export default function ProblemSolver() {
             language: selectedLanguage.id,
             input: tc.input,
             mode: "run",
+            sessionId: session?.sessionId,
           },
         });
 
