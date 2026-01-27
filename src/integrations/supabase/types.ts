@@ -303,6 +303,7 @@ export type Database = {
           id: string
           is_disqualified: boolean
           started_at: string
+          user_id: string | null
           username: string
           warnings: number
         }
@@ -314,6 +315,7 @@ export type Database = {
           id?: string
           is_disqualified?: boolean
           started_at?: string
+          user_id?: string | null
           username: string
           warnings?: number
         }
@@ -325,6 +327,7 @@ export type Database = {
           id?: string
           is_disqualified?: boolean
           started_at?: string
+          user_id?: string | null
           username?: string
           warnings?: number
         }
