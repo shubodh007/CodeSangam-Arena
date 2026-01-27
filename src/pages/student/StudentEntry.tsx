@@ -64,26 +64,43 @@ export default function StudentEntry() {
     setLoading(true);
 
     try {
+      // Sign in anonymously if not already authenticated
+      let userId: string;
+      const { data: { session: existingSession } } = await supabase.auth.getSession();
+      
+      if (existingSession?.user) {
+        userId = existingSession.user.id;
+      } else {
+        // Create anonymous session for student
+        const { data: anonData, error: anonError } = await supabase.auth.signInAnonymously();
+        if (anonError) throw anonError;
+        if (!anonData.user) throw new Error("Failed to create anonymous session");
+        userId = anonData.user.id;
+      }
+
       // Check if username is already taken in this contest
-      const { data: existingSession } = await supabase
+      const { data: existingSession2, error: checkError } = await supabase
         .from("student_sessions")
         .select("id")
         .eq("contest_id", selectedContest)
         .eq("username", username.trim())
-        .single();
+        .maybeSingle();
 
-      if (existingSession) {
+      if (checkError) throw checkError;
+
+      if (existingSession2) {
         setError("This username is already taken in this contest. Please choose another.");
         setLoading(false);
         return;
       }
 
-      // Create student session
+      // Create student session with user_id for RLS
       const { data: session, error: sessionError } = await supabase
         .from("student_sessions")
         .insert({
           contest_id: selectedContest,
           username: username.trim(),
+          user_id: userId,
           warnings: 0,
           is_disqualified: false,
         })
@@ -97,6 +114,7 @@ export default function StudentEntry() {
         sessionId: session.id,
         contestId: selectedContest,
         username: username.trim(),
+        userId: userId,
       }));
 
       toast({
@@ -106,6 +124,7 @@ export default function StudentEntry() {
 
       navigate(`/contest/${selectedContest}`);
     } catch (err: any) {
+      console.error("Entry error:", err);
       setError(err.message || "Failed to join contest. Please try again.");
     } finally {
       setLoading(false);
