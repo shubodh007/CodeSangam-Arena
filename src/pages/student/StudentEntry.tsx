@@ -66,10 +66,10 @@ export default function StudentEntry() {
     try {
       // Sign in anonymously if not already authenticated
       let userId: string;
-      const { data: { session: existingSession } } = await supabase.auth.getSession();
+      const { data: { session: authSession } } = await supabase.auth.getSession();
       
-      if (existingSession?.user) {
-        userId = existingSession.user.id;
+      if (authSession?.user) {
+        userId = authSession.user.id;
       } else {
         // Create anonymous session for student
         const { data: anonData, error: anonError } = await supabase.auth.signInAnonymously();
@@ -78,36 +78,121 @@ export default function StudentEntry() {
         userId = anonData.user.id;
       }
 
-      // Check if username is already taken in this contest
-      const { data: existingSession2, error: checkError } = await supabase
+      // Check if this user already has a session for this contest (same user_id)
+      const { data: existingUserSession, error: userSessionError } = await supabase
+        .from("student_sessions")
+        .select("id, username, is_disqualified, ended_at")
+        .eq("contest_id", selectedContest)
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      if (userSessionError && userSessionError.code !== "PGRST116") {
+        throw userSessionError;
+      }
+
+      // If user already has a session, handle it
+      if (existingUserSession) {
+        if (existingUserSession.is_disqualified) {
+          setError("You have been disqualified from this contest and cannot rejoin.");
+          setLoading(false);
+          return;
+        }
+        if (existingUserSession.ended_at) {
+          setError("You have already completed this contest and cannot rejoin.");
+          setLoading(false);
+          return;
+        }
+        // User has an active session - resume it
+        localStorage.setItem("arena_session", JSON.stringify({
+          sessionId: existingUserSession.id,
+          contestId: selectedContest,
+          username: existingUserSession.username,
+          userId: userId,
+        }));
+        toast({
+          title: "Welcome back!",
+          description: "Resuming your contest session.",
+        });
+        navigate(`/contest/${selectedContest}`);
+        return;
+      }
+
+      // Check if username is already taken by another user in this contest
+      const { data: existingUsername, error: checkError } = await supabase
         .from("student_sessions")
         .select("id")
         .eq("contest_id", selectedContest)
         .eq("username", username.trim())
         .maybeSingle();
 
-      if (checkError) throw checkError;
+      if (checkError && checkError.code !== "PGRST116") {
+        throw checkError;
+      }
 
-      if (existingSession2) {
+      if (existingUsername) {
         setError("This username is already taken in this contest. Please choose another.");
         setLoading(false);
         return;
       }
 
       // Create student session with user_id for RLS
+      // Use upsert pattern to handle race conditions
       const { data: session, error: sessionError } = await supabase
         .from("student_sessions")
-        .insert({
-          contest_id: selectedContest,
-          username: username.trim(),
-          user_id: userId,
-          warnings: 0,
-          is_disqualified: false,
-        })
+        .upsert(
+          {
+            contest_id: selectedContest,
+            username: username.trim(),
+            user_id: userId,
+            warnings: 0,
+            is_disqualified: false,
+          },
+          {
+            onConflict: "user_id,contest_id",
+            ignoreDuplicates: false,
+          }
+        )
         .select()
         .single();
 
-      if (sessionError) throw sessionError;
+      if (sessionError) {
+        // Handle conflict gracefully - fetch existing session
+        if (sessionError.code === "23505") {
+          const { data: conflictSession } = await supabase
+            .from("student_sessions")
+            .select("id, username, is_disqualified, ended_at")
+            .eq("contest_id", selectedContest)
+            .eq("user_id", userId)
+            .single();
+
+          if (conflictSession) {
+            if (conflictSession.is_disqualified) {
+              setError("You have been disqualified from this contest.");
+              setLoading(false);
+              return;
+            }
+            if (conflictSession.ended_at) {
+              setError("You have already completed this contest.");
+              setLoading(false);
+              return;
+            }
+            // Resume existing session
+            localStorage.setItem("arena_session", JSON.stringify({
+              sessionId: conflictSession.id,
+              contestId: selectedContest,
+              username: conflictSession.username,
+              userId: userId,
+            }));
+            toast({
+              title: "Welcome back!",
+              description: "Resuming your contest session.",
+            });
+            navigate(`/contest/${selectedContest}`);
+            return;
+          }
+        }
+        throw sessionError;
+      }
 
       // Store session in localStorage for the contest
       localStorage.setItem("arena_session", JSON.stringify({

@@ -4,6 +4,7 @@ import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
 import { ArenaCard, ArenaCardContent } from "@/components/ArenaCard";
 import { StatusBadge } from "@/components/StatusBadge";
+import { ExitContestDialog } from "@/components/ExitContestDialog";
 import { supabase } from "@/integrations/supabase/client";
 import { useAntiCheat } from "@/hooks/useAntiCheat";
 import { useContestTimer } from "@/hooks/useContestTimer";
@@ -47,12 +48,23 @@ export default function ContestPage() {
   const [showFullscreenPrompt, setShowFullscreenPrompt] = useState(true);
   const [showDisqualified, setShowDisqualified] = useState(false);
   const [showContestEnded, setShowContestEnded] = useState(false);
+  const [showExitDialog, setShowExitDialog] = useState(false);
 
-  // Anti-cheat callbacks
-  const handleDisqualified = useCallback(() => {
+  // Anti-cheat callbacks - auto-end contest on disqualification
+  const handleDisqualified = useCallback(async () => {
+    // End session server-side
+    if (session?.sessionId) {
+      await supabase
+        .from("student_sessions")
+        .update({
+          is_disqualified: true,
+          ended_at: new Date().toISOString(),
+        })
+        .eq("id", session.sessionId);
+    }
     setShowDisqualified(true);
     localStorage.removeItem("arena_session");
-  }, []);
+  }, [session?.sessionId]);
 
   const handleWarning = useCallback((count: number, reason: string) => {
     toast({
@@ -192,7 +204,18 @@ export default function ContestPage() {
     }
   };
 
-  const handleExitContest = () => {
+  const handleExitClick = () => {
+    setShowExitDialog(true);
+  };
+
+  const handleConfirmExit = async () => {
+    // End session server-side
+    if (session?.sessionId) {
+      await supabase
+        .from("student_sessions")
+        .update({ ended_at: new Date().toISOString() })
+        .eq("id", session.sessionId);
+    }
     localStorage.removeItem("arena_session");
     navigate("/");
   };
@@ -400,7 +423,7 @@ export default function ContestPage() {
               </Button>
             )}
 
-            <Button variant="ghost" size="sm" onClick={handleExitContest}>
+            <Button variant="ghost" size="sm" onClick={handleExitClick}>
               <LogOut size={14} />
               Exit
             </Button>
@@ -408,6 +431,12 @@ export default function ContestPage() {
         </div>
       </header>
 
+      {/* Exit Confirmation Dialog */}
+      <ExitContestDialog
+        open={showExitDialog}
+        onOpenChange={setShowExitDialog}
+        onConfirm={handleConfirmExit}
+      />
       {/* Main Content */}
       <main className="flex-1 container mx-auto px-6 py-8">
         <div className="max-w-4xl mx-auto">
