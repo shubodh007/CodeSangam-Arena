@@ -15,10 +15,13 @@ const LANGUAGE_CONFIG: Record<string, { language: string; version: string; filen
   go: { language: "go", version: "1.16.2", filename: "main.go" },
 };
 
-// In-memory rate limiting (per session)
+// In-memory rate limiting (per session) - short-term burst protection
 const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
-const RATE_LIMIT_REQUESTS = 30; // max requests per window
+const RATE_LIMIT_REQUESTS = 30; // max requests per minute
 const RATE_LIMIT_WINDOW_MS = 60000; // 1 minute window
+
+// Per-session execution quota (stored in DB) - contest-wide limit
+const MAX_EXECUTIONS_PER_SESSION = 500; // max total executions per contest session
 
 interface ExecuteRequest {
   code: string;
@@ -323,7 +326,7 @@ serve(async (req) => {
     }
 
     // ============================================
-    // RATE LIMITING (per session)
+    // RATE LIMITING (per session - short-term burst)
     // ============================================
     const rateLimit = checkRateLimit(sessionId);
     if (!rateLimit.allowed) {
@@ -346,9 +349,60 @@ serve(async (req) => {
       );
     }
 
+    // ============================================
+    // PER-SESSION EXECUTION QUOTA (contest-wide limit)
+    // ============================================
+    const { data: sessionData } = await supabase
+      .from("student_sessions")
+      .select("execution_count")
+      .eq("id", sessionId)
+      .single();
+
+    const currentExecutionCount = (sessionData as { execution_count: number } | null)?.execution_count || 0;
+    
+    if (currentExecutionCount >= MAX_EXECUTIONS_PER_SESSION) {
+      console.log(`Execution quota exceeded for session ${sessionId}: ${currentExecutionCount}/${MAX_EXECUTIONS_PER_SESSION}`);
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          error: `Execution quota exceeded (${MAX_EXECUTIONS_PER_SESSION} max per contest). Contact administrator.`,
+        }),
+        { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Increment execution count
+    await supabase
+      .from("student_sessions")
+      .update({ execution_count: currentExecutionCount + 1 })
+      .eq("id", sessionId);
+
+    // ============================================
+    // AUDIT LOGGING
+    // ============================================
+    const logExecution = async (execStatus: string, execTime?: number) => {
+      try {
+        await supabase.from("execution_logs").insert({
+          session_id: sessionId,
+          problem_id: problemId || null,
+          language: language,
+          mode: mode,
+          status: execStatus,
+          execution_time_ms: execTime || 0,
+          code_length: code.length,
+        });
+      } catch (logError) {
+        console.error("Failed to log execution:", logError);
+      }
+    };
+
     // For RUN mode: just execute against provided input
     if (mode === "run") {
       const result = await executeCode(code, language, input || "");
+      
+      // Log the execution
+      await logExecution(result.success ? "success" : "error", result.executionTime);
+      
       return new Response(JSON.stringify(result), {
         headers: { 
           ...corsHeaders, 
@@ -488,6 +542,9 @@ serve(async (req) => {
           .eq("session_id", sessionId)
           .eq("problem_id", problemId);
       }
+
+      // Log the submission execution
+      await logExecution(status, totalExecutionTime);
 
       console.log(`Submission complete for session ${sessionId.slice(0, 8)}: status=${status}, score=${score}`);
 

@@ -44,6 +44,64 @@ export type Database = {
         }
         Relationships: []
       }
+      execution_logs: {
+        Row: {
+          code_length: number | null
+          created_at: string
+          execution_time_ms: number | null
+          id: string
+          language: string
+          mode: string
+          problem_id: string | null
+          session_id: string
+          status: string
+        }
+        Insert: {
+          code_length?: number | null
+          created_at?: string
+          execution_time_ms?: number | null
+          id?: string
+          language: string
+          mode: string
+          problem_id?: string | null
+          session_id: string
+          status: string
+        }
+        Update: {
+          code_length?: number | null
+          created_at?: string
+          execution_time_ms?: number | null
+          id?: string
+          language?: string
+          mode?: string
+          problem_id?: string | null
+          session_id?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "execution_logs_problem_id_fkey"
+            columns: ["problem_id"]
+            isOneToOne: false
+            referencedRelation: "problems"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "execution_logs_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "leaderboard_view"
+            referencedColumns: ["session_id"]
+          },
+          {
+            foreignKeyName: "execution_logs_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "student_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       hidden_test_cases: {
         Row: {
           created_at: string
@@ -227,6 +285,7 @@ export type Database = {
           contest_id: string
           created_at: string
           ended_at: string | null
+          execution_count: number
           id: string
           is_disqualified: boolean
           started_at: string
@@ -237,6 +296,7 @@ export type Database = {
           contest_id: string
           created_at?: string
           ended_at?: string | null
+          execution_count?: number
           id?: string
           is_disqualified?: boolean
           started_at?: string
@@ -247,6 +307,7 @@ export type Database = {
           contest_id?: string
           created_at?: string
           ended_at?: string | null
+          execution_count?: number
           id?: string
           is_disqualified?: boolean
           started_at?: string

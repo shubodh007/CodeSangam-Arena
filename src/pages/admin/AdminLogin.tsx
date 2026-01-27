@@ -33,14 +33,15 @@ export default function AdminLogin() {
       }
 
       if (data.user) {
-        // Check if user is admin
-        const { data: profile, error: profileError } = await supabase
-          .from("profiles")
+        // Check if user is admin using authoritative user_roles table
+        const { data: roleData, error: roleError } = await supabase
+          .from("user_roles")
           .select("role")
-          .eq("id", data.user.id)
-          .single();
+          .eq("user_id", data.user.id)
+          .eq("role", "admin")
+          .maybeSingle();
 
-        if (profileError || profile?.role !== "admin") {
+        if (roleError || !roleData) {
           await supabase.auth.signOut();
           setError("You do not have admin access.");
           return;
