@@ -15,6 +15,11 @@ const LANGUAGE_CONFIG: Record<string, { language: string; version: string; filen
   go: { language: "go", version: "1.16.2", filename: "main.go" },
 };
 
+// In-memory rate limiting (per session)
+const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
+const RATE_LIMIT_REQUESTS = 30; // max requests per window
+const RATE_LIMIT_WINDOW_MS = 60000; // 1 minute window
+
 interface ExecuteRequest {
   code: string;
   language: string;
@@ -40,6 +45,25 @@ interface PistonResponse {
     output: string;
   };
   message?: string;
+}
+
+// Rate limiter check
+function checkRateLimit(sessionId: string): { allowed: boolean; remaining: number } {
+  const now = Date.now();
+  const entry = rateLimitMap.get(sessionId);
+
+  if (!entry || now > entry.resetTime) {
+    // New window
+    rateLimitMap.set(sessionId, { count: 1, resetTime: now + RATE_LIMIT_WINDOW_MS });
+    return { allowed: true, remaining: RATE_LIMIT_REQUESTS - 1 };
+  }
+
+  if (entry.count >= RATE_LIMIT_REQUESTS) {
+    return { allowed: false, remaining: 0 };
+  }
+
+  entry.count++;
+  return { allowed: true, remaining: RATE_LIMIT_REQUESTS - entry.count };
 }
 
 // Normalize output for comparison
@@ -129,6 +153,114 @@ async function executeCode(
   }
 }
 
+// Validate session ownership and status
+// deno-lint-ignore no-explicit-any
+async function validateSession(
+  supabase: any,
+  sessionId: string,
+  problemId?: string
+): Promise<{ valid: boolean; error?: string; contestId?: string }> {
+  // Fetch session and verify it's active
+  const { data: session, error: sessionError } = await supabase
+    .from("student_sessions")
+    .select("id, contest_id, is_disqualified, ended_at, started_at")
+    .eq("id", sessionId)
+    .single();
+
+  if (sessionError || !session) {
+    console.log(`Session validation failed: session ${sessionId} not found`);
+    return { valid: false, error: "Invalid session" };
+  }
+
+  // Type assertion for session data
+  const sessionData = session as {
+    id: string;
+    contest_id: string;
+    is_disqualified: boolean;
+    ended_at: string | null;
+    started_at: string;
+  };
+
+  // Check if session is disqualified
+  if (sessionData.is_disqualified) {
+    console.log(`Session ${sessionId} is disqualified`);
+    return { valid: false, error: "Session is disqualified" };
+  }
+
+  // Check if session has ended
+  if (sessionData.ended_at) {
+    console.log(`Session ${sessionId} has ended`);
+    return { valid: false, error: "Session has ended" };
+  }
+
+  // Check if contest is still active
+  const { data: contest, error: contestError } = await supabase
+    .from("contests")
+    .select("id, is_active, duration_minutes")
+    .eq("id", sessionData.contest_id)
+    .single();
+
+  if (contestError || !contest) {
+    console.log(`Contest not found for session ${sessionId}`);
+    return { valid: false, error: "Contest not found" };
+  }
+
+  // Type assertion for contest data
+  const contestData = contest as {
+    id: string;
+    is_active: boolean;
+    duration_minutes: number;
+  };
+
+  if (!contestData.is_active) {
+    console.log(`Contest ${contestData.id} is not active`);
+    return { valid: false, error: "Contest is not active" };
+  }
+
+  // Check if contest time has expired
+  const sessionStart = new Date(sessionData.started_at).getTime();
+  const contestEndTime = sessionStart + contestData.duration_minutes * 60 * 1000;
+  const now = Date.now();
+
+  if (now > contestEndTime) {
+    console.log(`Contest time expired for session ${sessionId}`);
+    return { valid: false, error: "Contest time has expired" };
+  }
+
+  // If problemId provided, verify problem belongs to this contest
+  if (problemId) {
+    const { data: problem, error: problemError } = await supabase
+      .from("problems")
+      .select("id, contest_id")
+      .eq("id", problemId)
+      .eq("contest_id", sessionData.contest_id)
+      .single();
+
+    if (problemError || !problem) {
+      console.log(`Problem ${problemId} not found in contest ${sessionData.contest_id}`);
+      return { valid: false, error: "Problem not found in this contest" };
+    }
+
+    // Check if problem is already locked (solved)
+    const { data: status } = await supabase
+      .from("student_problem_status")
+      .select("is_locked, accepted_at")
+      .eq("session_id", sessionId)
+      .eq("problem_id", problemId)
+      .single();
+
+    // Type assertion for status data
+    const statusData = status as { is_locked: boolean; accepted_at: string | null } | null;
+
+    if (statusData?.is_locked || statusData?.accepted_at) {
+      console.log(`Problem ${problemId} already solved for session ${sessionId}`);
+      return { valid: false, error: "Problem already solved" };
+    }
+  }
+
+  return { valid: true, contestId: sessionData.contest_id };
+}
+
 serve(async (req) => {
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
@@ -139,7 +271,7 @@ serve(async (req) => {
     const requestData: ExecuteRequest = await req.json();
     const { code, language, input, mode, sessionId, problemId } = requestData;
 
-    console.log(`Execute request: mode=${mode}, language=${language}, problemId=${problemId}`);
+    console.log(`Execute request: mode=${mode}, language=${language}, problemId=${problemId}, sessionId=${sessionId?.slice(0, 8)}...`);
 
     // Validate required fields
     if (!code || !language) {
@@ -149,27 +281,91 @@ serve(async (req) => {
       );
     }
 
+    // Validate language
+    if (!LANGUAGE_CONFIG[language]) {
+      return new Response(
+        JSON.stringify({ success: false, error: `Unsupported language: ${language}` }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Code length limit (prevent abuse)
+    if (code.length > 50000) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Code exceeds maximum length (50KB)" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Initialize Supabase client with service role
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    // ============================================
+    // SECURITY: SESSION VALIDATION (REQUIRED)
+    // ============================================
+    // SessionId is REQUIRED for all requests to prevent abuse
+    if (!sessionId) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Session ID is required" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Validate session exists and is active
+    const sessionValidation = await validateSession(supabase, sessionId, mode === "submit" ? problemId : undefined);
+    if (!sessionValidation.valid) {
+      return new Response(
+        JSON.stringify({ success: false, error: sessionValidation.error }),
+        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // ============================================
+    // RATE LIMITING (per session)
+    // ============================================
+    const rateLimit = checkRateLimit(sessionId);
+    if (!rateLimit.allowed) {
+      console.log(`Rate limit exceeded for session ${sessionId}`);
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          error: "Rate limit exceeded. Please wait before submitting again.",
+          retryAfter: 60
+        }),
+        { 
+          status: 429, 
+          headers: { 
+            ...corsHeaders, 
+            "Content-Type": "application/json",
+            "X-RateLimit-Remaining": "0",
+            "Retry-After": "60"
+          } 
+        }
+      );
+    }
+
     // For RUN mode: just execute against provided input
     if (mode === "run") {
       const result = await executeCode(code, language, input || "");
       return new Response(JSON.stringify(result), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        headers: { 
+          ...corsHeaders, 
+          "Content-Type": "application/json",
+          "X-RateLimit-Remaining": rateLimit.remaining.toString()
+        },
       });
     }
 
     // For SUBMIT mode: execute against hidden test cases
     if (mode === "submit") {
-      if (!sessionId || !problemId) {
+      if (!problemId) {
         return new Response(
-          JSON.stringify({ success: false, error: "Missing sessionId or problemId for submit" }),
+          JSON.stringify({ success: false, error: "Missing problemId for submit" }),
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
-
-      // Initialize Supabase client with service role
-      const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-      const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-      const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
       // Fetch hidden test cases
       const { data: testCases, error: tcError } = await supabase
@@ -192,7 +388,7 @@ serve(async (req) => {
         );
       }
 
-      console.log(`Running ${testCases.length} hidden test cases`);
+      console.log(`Running ${testCases.length} hidden test cases for session ${sessionId.slice(0, 8)}...`);
 
       let allPassed = true;
       let failedTestCase = 0;
@@ -293,6 +489,8 @@ serve(async (req) => {
           .eq("problem_id", problemId);
       }
 
+      console.log(`Submission complete for session ${sessionId.slice(0, 8)}: status=${status}, score=${score}`);
+
       return new Response(
         JSON.stringify({
           success: allPassed,
@@ -304,7 +502,13 @@ serve(async (req) => {
           error: errorMessage,
           executionTime: totalExecutionTime,
         }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        { 
+          headers: { 
+            ...corsHeaders, 
+            "Content-Type": "application/json",
+            "X-RateLimit-Remaining": rateLimit.remaining.toString()
+          } 
+        }
       );
     }
 
