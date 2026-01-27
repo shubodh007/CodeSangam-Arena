@@ -90,6 +90,13 @@ export type Database = {
             foreignKeyName: "execution_logs_session_id_fkey"
             columns: ["session_id"]
             isOneToOne: false
+            referencedRelation: "admin_leaderboard_view"
+            referencedColumns: ["session_id"]
+          },
+          {
+            foreignKeyName: "execution_logs_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
             referencedRelation: "leaderboard_view"
             referencedColumns: ["session_id"]
           },
@@ -268,6 +275,13 @@ export type Database = {
             foreignKeyName: "student_problem_status_session_id_fkey"
             columns: ["session_id"]
             isOneToOne: false
+            referencedRelation: "admin_leaderboard_view"
+            referencedColumns: ["session_id"]
+          },
+          {
+            foreignKeyName: "student_problem_status_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
             referencedRelation: "leaderboard_view"
             referencedColumns: ["session_id"]
           },
@@ -367,6 +381,13 @@ export type Database = {
             foreignKeyName: "submissions_session_id_fkey"
             columns: ["session_id"]
             isOneToOne: false
+            referencedRelation: "admin_leaderboard_view"
+            referencedColumns: ["session_id"]
+          },
+          {
+            foreignKeyName: "submissions_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
             referencedRelation: "leaderboard_view"
             referencedColumns: ["session_id"]
           },
@@ -402,9 +423,10 @@ export type Database = {
       }
     }
     Views: {
-      leaderboard_view: {
+      admin_leaderboard_view: {
         Row: {
           contest_id: string | null
+          execution_count: number | null
           is_disqualified: boolean | null
           last_accepted_at: string | null
           problems_solved: number | null
@@ -414,6 +436,28 @@ export type Database = {
           total_time_seconds: number | null
           username: string | null
           warnings: number | null
+          wrong_attempts: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "student_sessions_contest_id_fkey"
+            columns: ["contest_id"]
+            isOneToOne: false
+            referencedRelation: "contests"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      leaderboard_view: {
+        Row: {
+          contest_id: string | null
+          last_accepted_at: string | null
+          problems_solved: number | null
+          rank: number | null
+          session_id: string | null
+          total_score: number | null
+          total_time_seconds: number | null
+          username: string | null
           wrong_attempts: number | null
         }
         Relationships: [
