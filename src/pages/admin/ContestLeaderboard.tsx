@@ -29,6 +29,7 @@ interface LeaderboardEntry {
   username: string;
   is_disqualified: boolean;
   warnings: number;
+  execution_count: number;
   total_score: number;
   problems_solved: number;
   wrong_attempts: number;
@@ -134,8 +135,9 @@ export default function ContestLeaderboard() {
 
   const fetchLeaderboard = async () => {
     try {
+      // Use admin view that includes warnings and disqualification status
       const { data, error } = await supabase
-        .from("leaderboard_view")
+        .from("admin_leaderboard_view")
         .select("*")
         .eq("contest_id", contestId)
         .order("rank", { ascending: true });
