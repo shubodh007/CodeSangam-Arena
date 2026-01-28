@@ -78,134 +78,71 @@ export default function StudentEntry() {
         userId = anonData.user.id;
       }
 
-      // Check if this user already has a session for this contest (same user_id)
-      const { data: existingUserSession, error: userSessionError } = await supabase
-        .from("student_sessions")
-        .select("id, username, is_disqualified, ended_at")
-        .eq("contest_id", selectedContest)
-        .eq("user_id", userId)
-        .maybeSingle();
+      // Use the session-management edge function for atomic upsert
+      const { data: fnResponse, error: fnError } = await supabase.functions.invoke(
+        "session-management",
+        {
+          body: {
+            user_id: userId,
+            contest_id: selectedContest,
+            username: username.trim(),
+          },
+        }
+      );
 
-      if (userSessionError && userSessionError.code !== "PGRST116") {
-        throw userSessionError;
+      if (fnError) {
+        throw fnError;
       }
 
-      // If user already has a session, handle it
-      if (existingUserSession) {
-        if (existingUserSession.is_disqualified) {
-          setError("You have been disqualified from this contest and cannot rejoin.");
+      if (!fnResponse.success) {
+        // Handle specific error cases from the edge function
+        if (fnResponse.error === "Username is already taken in this contest") {
+          setError("This username is already taken in this contest. Please choose another.");
           setLoading(false);
           return;
         }
-        if (existingUserSession.ended_at) {
-          setError("You have already completed this contest and cannot rejoin.");
+        if (fnResponse.error === "Contest is not active") {
+          setError("This contest is no longer active.");
           setLoading(false);
           return;
         }
-        // User has an active session - resume it
-        localStorage.setItem("arena_session", JSON.stringify({
-          sessionId: existingUserSession.id,
-          contestId: selectedContest,
-          username: existingUserSession.username,
-          userId: userId,
-        }));
-        toast({
-          title: "Welcome back!",
-          description: "Resuming your contest session.",
-        });
-        navigate(`/contest/${selectedContest}`);
+        throw new Error(fnResponse.error || "Failed to create session");
+      }
+
+      const session = fnResponse.session;
+
+      // Check if session is disqualified or ended
+      if (session.is_disqualified) {
+        setError("You have been disqualified from this contest and cannot rejoin.");
+        setLoading(false);
         return;
       }
-
-      // Check if username is already taken by another user in this contest
-      const { data: existingUsername, error: checkError } = await supabase
-        .from("student_sessions")
-        .select("id")
-        .eq("contest_id", selectedContest)
-        .eq("username", username.trim())
-        .maybeSingle();
-
-      if (checkError && checkError.code !== "PGRST116") {
-        throw checkError;
-      }
-
-      if (existingUsername) {
-        setError("This username is already taken in this contest. Please choose another.");
+      if (session.ended_at) {
+        setError("You have already completed this contest and cannot rejoin.");
         setLoading(false);
         return;
       }
 
-      // Create student session with user_id for RLS
-      // Use upsert pattern to handle race conditions
-      const { data: session, error: sessionError } = await supabase
-        .from("student_sessions")
-        .upsert(
-          {
-            contest_id: selectedContest,
-            username: username.trim(),
-            user_id: userId,
-            warnings: 0,
-            is_disqualified: false,
-          },
-          {
-            onConflict: "user_id,contest_id",
-            ignoreDuplicates: false,
-          }
-        )
-        .select()
-        .single();
-
-      if (sessionError) {
-        // Handle conflict gracefully - fetch existing session
-        if (sessionError.code === "23505") {
-          const { data: conflictSession } = await supabase
-            .from("student_sessions")
-            .select("id, username, is_disqualified, ended_at")
-            .eq("contest_id", selectedContest)
-            .eq("user_id", userId)
-            .single();
-
-          if (conflictSession) {
-            if (conflictSession.is_disqualified) {
-              setError("You have been disqualified from this contest.");
-              setLoading(false);
-              return;
-            }
-            if (conflictSession.ended_at) {
-              setError("You have already completed this contest.");
-              setLoading(false);
-              return;
-            }
-            // Resume existing session
-            localStorage.setItem("arena_session", JSON.stringify({
-              sessionId: conflictSession.id,
-              contestId: selectedContest,
-              username: conflictSession.username,
-              userId: userId,
-            }));
-            toast({
-              title: "Welcome back!",
-              description: "Resuming your contest session.",
-            });
-            navigate(`/contest/${selectedContest}`);
-            return;
-          }
-        }
-        throw sessionError;
-      }
-
       // Store session in localStorage for the contest
       localStorage.setItem("arena_session", JSON.stringify({
-        sessionId: session.id,
+        sessionId: session.session_id,
         contestId: selectedContest,
-        username: username.trim(),
+        username: session.username,
         userId: userId,
       }));
 
-      toast({
-        title: "Welcome to the arena!",
-        description: "Good luck with your contest.",
-      });
+      // Show appropriate message based on action
+      if (fnResponse.action === "existing") {
+        toast({
+          title: "Welcome back!",
+          description: "Resuming your contest session.",
+        });
+      } else {
+        toast({
+          title: "Welcome to the arena!",
+          description: "Good luck with your contest.",
+        });
+      }
 
       navigate(`/contest/${selectedContest}`);
     } catch (err: any) {

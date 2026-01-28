@@ -476,6 +476,21 @@ export type Database = {
     }
     Functions: {
       is_admin: { Args: { _user_id: string }; Returns: boolean }
+      upsert_student_session: {
+        Args: { p_contest_id: string; p_user_id: string; p_username: string }
+        Returns: {
+          action: string
+          contest_id: string
+          ended_at: string
+          execution_count: number
+          is_disqualified: boolean
+          session_id: string
+          started_at: string
+          user_id: string
+          username: string
+          warnings: number
+        }[]
+      }
     }
     Enums: {
       app_role: "admin" | "user"
