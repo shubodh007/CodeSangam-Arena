@@ -7,8 +7,6 @@ import { ArenaCard, ArenaCardContent, ArenaCardHeader } from "@/components/Arena
 import { User, ArrowLeft, AlertCircle, Trophy } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { useSessionRecovery } from "@/hooks/useSessionRecovery";
-import { SessionRecoveryBanner } from "@/components/SessionRecoveryBanner";
 
 interface Contest {
   id: string;
@@ -27,24 +25,10 @@ export default function StudentEntry() {
   const [loading, setLoading] = useState(false);
   const [loadingContests, setLoadingContests] = useState(true);
   const [error, setError] = useState("");
-  const [resumingSession, setResumingSession] = useState(false);
-  
-  const { activeSession, isLoading: checkingSession } = useSessionRecovery();
 
   useEffect(() => {
     fetchActiveContests();
   }, []);
-
-  const handleResumeSession = () => {
-    if (!activeSession) return;
-    
-    setResumingSession(true);
-    toast({
-      title: "Welcome back!",
-      description: "Resuming your contest session.",
-    });
-    navigate(`/contest/${activeSession.contestId}`);
-  };
 
   const fetchActiveContests = async () => {
     try {
@@ -196,14 +180,6 @@ export default function StudentEntry() {
             </div>
           </div>
 
-          {/* Session Recovery Banner */}
-          {!checkingSession && activeSession && (
-            <SessionRecoveryBanner
-              session={activeSession}
-              onResume={handleResumeSession}
-              isLoading={resumingSession}
-            />
-          )}
 
           <ArenaCard glow>
             <ArenaCardHeader>
