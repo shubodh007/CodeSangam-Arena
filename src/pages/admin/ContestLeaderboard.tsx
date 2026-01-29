@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import { ArenaCard, ArenaCardContent, ArenaCardHeader } from "@/components/ArenaCard";
 import { StatusBadge } from "@/components/StatusBadge";
 import { supabase } from "@/integrations/supabase/client";
+import { AddWarningDialog } from "@/components/admin/AddWarningDialog";
+import { ResetWarningsDialog } from "@/components/admin/ResetWarningsDialog";
 import {
   Table,
   TableBody,
@@ -105,6 +107,17 @@ export default function ContestLeaderboard() {
           event: "*",
           schema: "public",
           table: "submissions",
+        },
+        () => {
+          fetchLeaderboard();
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "student_sessions",
         },
         () => {
           fetchLeaderboard();
@@ -288,6 +301,7 @@ export default function ContestLeaderboard() {
                     <TableHead className="text-center">Total Time</TableHead>
                     <TableHead className="text-center">Warnings</TableHead>
                     <TableHead className="text-center">Status</TableHead>
+                    <TableHead className="text-center w-24">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -324,13 +338,15 @@ export default function ContestLeaderboard() {
                       </TableCell>
                       <TableCell className="text-center">
                         <span className={
-                          entry.warnings >= 10 
-                            ? "text-destructive font-medium" 
-                            : entry.warnings >= 5 
-                              ? "text-warning" 
-                              : "text-muted-foreground"
+                          entry.warnings >= 15 
+                            ? "text-destructive font-bold" 
+                            : entry.warnings >= 10 
+                              ? "text-destructive font-medium" 
+                              : entry.warnings >= 5 
+                                ? "text-warning" 
+                                : "text-muted-foreground"
                         }>
-                          {entry.warnings}/15
+                          {entry.warnings}
                         </span>
                       </TableCell>
                       <TableCell className="text-center">
@@ -339,6 +355,24 @@ export default function ContestLeaderboard() {
                         ) : (
                           <StatusBadge status="active" size="sm" />
                         )}
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <AddWarningDialog
+                            sessionId={entry.session_id}
+                            username={entry.username}
+                            currentWarnings={entry.warnings}
+                            isDisqualified={entry.is_disqualified}
+                            onWarningAdded={fetchLeaderboard}
+                          />
+                          <ResetWarningsDialog
+                            sessionId={entry.session_id}
+                            username={entry.username}
+                            currentWarnings={entry.warnings}
+                            isDisqualified={entry.is_disqualified}
+                            onWarningsReset={fetchLeaderboard}
+                          />
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
