@@ -131,18 +131,10 @@ export default function StudentEntry() {
         userId: userId,
       }));
 
-      // Show appropriate message based on action
-      if (fnResponse.action === "existing") {
-        toast({
-          title: "Welcome back!",
-          description: "Resuming your contest session.",
-        });
-      } else {
-        toast({
-          title: "Welcome to the arena!",
-          description: "Good luck with your contest.",
-        });
-      }
+      toast({
+        title: "Welcome to the arena!",
+        description: "Good luck with your contest.",
+      });
 
       navigate(`/contest/${selectedContest}`);
     } catch (err: any) {
