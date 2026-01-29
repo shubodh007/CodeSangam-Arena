@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.session-management]
 verify_jwt = false
+
+[functions.admin-warnings]
+verify_jwt = false
