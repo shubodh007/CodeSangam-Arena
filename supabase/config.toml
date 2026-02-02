@@ -8,3 +8,6 @@ verify_jwt = false
 
 [functions.admin-warnings]
 verify_jwt = false
+
+[functions.report-violation]
+verify_jwt = false

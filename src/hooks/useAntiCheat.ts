@@ -62,7 +62,7 @@ export function useAntiCheat({
     }
   }, [sessionId, onDisqualified]);
 
-  // Report violation to server
+  // Report violation to server via edge function (bypasses RLS for atomic update)
   const reportViolation = useCallback(
     async (reason: string) => {
       if (!sessionId || !enabled) return;
@@ -73,50 +73,38 @@ export function useAntiCheat({
       lastViolationTime.current = now;
 
       try {
-        // Fetch current state from server
-        const { data: session, error: fetchError } = await supabase
-          .from("student_sessions")
-          .select("warnings, is_disqualified")
-          .eq("id", sessionId)
-          .single();
+        // Call edge function for atomic, server-side warning increment
+        // This uses service role to bypass RLS and ensure disqualification always works
+        const { data, error } = await supabase.functions.invoke("report-violation", {
+          body: {
+            session_id: sessionId,
+            reason,
+          },
+        });
 
-        if (fetchError || !session) return;
-
-        // Already disqualified
-        if (session.is_disqualified) {
-          onDisqualified();
+        if (error) {
+          console.error("Failed to report violation:", error);
           return;
         }
 
-        const newWarnings = session.warnings + 1;
-        const shouldDisqualify = newWarnings >= WARNING_LIMIT;
-
-        // Update server
-        const { error: updateError } = await supabase
-          .from("student_sessions")
-          .update({
-            warnings: newWarnings,
-            is_disqualified: shouldDisqualify,
-            ...(shouldDisqualify && { ended_at: new Date().toISOString() }),
-          })
-          .eq("id", sessionId);
-
-        if (updateError) {
-          console.error("Failed to update warnings:", updateError);
+        if (!data?.success) {
+          console.error("Violation report failed:", data?.error);
           return;
         }
 
-        // Update local state
+        const { warnings: newWarnings, is_disqualified: isDisqualified } = data;
+
+        // Update local state with server response
         setState((prev) => ({
           ...prev,
           warnings: newWarnings,
-          isDisqualified: shouldDisqualify,
+          isDisqualified: isDisqualified,
         }));
 
         // Notify UI
         onWarning(newWarnings, reason);
 
-        if (shouldDisqualify) {
+        if (isDisqualified) {
           onDisqualified();
         }
       } catch (err) {
