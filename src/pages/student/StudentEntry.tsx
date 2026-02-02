@@ -96,6 +96,11 @@ export default function StudentEntry() {
 
       if (!fnResponse.success) {
         // Handle specific error cases from the edge function
+        if (fnResponse.error?.includes("already have a session")) {
+          setError("You already have a session in this contest. Each student can only join once.");
+          setLoading(false);
+          return;
+        }
         if (fnResponse.error === "Username is already taken in this contest") {
           setError("This username is already taken in this contest. Please choose another.");
           setLoading(false);

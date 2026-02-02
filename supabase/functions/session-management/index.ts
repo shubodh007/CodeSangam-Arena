@@ -29,7 +29,6 @@ interface SessionResponse {
     started_at: string;
     execution_count: number;
   };
-  action?: "created" | "existing";
   error?: string;
   request_id?: string;
 }
@@ -191,6 +190,25 @@ serve(async (req) => {
 
         if (error) {
           // Handle specific error cases
+          if (error.message.includes("SESSION_EXISTS")) {
+            log("warn", "Session already exists for user in contest", {
+              request_id: requestId,
+              user_id: user_id.slice(0, 8) + "...",
+              contest_id: contest_id.slice(0, 8) + "...",
+            });
+            return new Response(
+              JSON.stringify({
+                success: false,
+                error: "You already have a session in this contest. Each student can only join once.",
+                request_id: requestId,
+              }),
+              {
+                status: 409,
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+              }
+            );
+          }
+
           if (error.message.includes("USERNAME_TAKEN")) {
             log("warn", "Username already taken", {
               request_id: requestId,
@@ -236,28 +254,14 @@ serve(async (req) => {
         }
 
         const sessionData = data[0];
-        const action = sessionData.action as "created" | "existing";
 
-        // Log conflict resolution event
-        if (action === "existing") {
-          log("info", "session_conflict_resolved", {
-            request_id: requestId,
-            session_id: sessionData.session_id,
-            user_id: user_id.slice(0, 8) + "...",
-            contest_id: contest_id.slice(0, 8) + "...",
-            action: "existing",
-            duration_ms: Date.now() - startTime,
-          });
-        } else {
-          log("info", "session_created", {
-            request_id: requestId,
-            session_id: sessionData.session_id,
-            user_id: user_id.slice(0, 8) + "...",
-            contest_id: contest_id.slice(0, 8) + "...",
-            action: "created",
-            duration_ms: Date.now() - startTime,
-          });
-        }
+        log("info", "session_created", {
+          request_id: requestId,
+          session_id: sessionData.session_id,
+          user_id: user_id.slice(0, 8) + "...",
+          contest_id: contest_id.slice(0, 8) + "...",
+          duration_ms: Date.now() - startTime,
+        });
 
         result = {
           success: true,
@@ -272,7 +276,6 @@ serve(async (req) => {
             started_at: sessionData.started_at,
             execution_count: sessionData.execution_count,
           },
-          action,
           request_id: requestId,
         };
 
