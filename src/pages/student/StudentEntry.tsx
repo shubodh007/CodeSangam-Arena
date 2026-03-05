@@ -91,27 +91,40 @@ export default function StudentEntry() {
       );
 
       if (fnError) {
+        // supabase.functions.invoke throws FunctionsHttpError on non-2xx
+        // Try to parse the error response body for user-friendly messages
+        let errorBody: any = null;
+        try {
+          if (fnError.context?.body) {
+            errorBody = JSON.parse(new TextDecoder().decode(await new Response(fnError.context.body).arrayBuffer()));
+          }
+        } catch {
+          // ignore parse errors
+        }
+
+        if (errorBody?.error) {
+          if (errorBody.error.includes("already have a session")) {
+            setError("You already have a session in this contest. Each student can only join once.");
+            setLoading(false);
+            return;
+          }
+          if (errorBody.error === "Username is already taken in this contest") {
+            setError("This username is already taken in this contest. Please choose another.");
+            setLoading(false);
+            return;
+          }
+          if (errorBody.error === "Contest is not active") {
+            setError("This contest is no longer active.");
+            setLoading(false);
+            return;
+          }
+          throw new Error(errorBody.error);
+        }
         throw fnError;
       }
 
-      if (!fnResponse.success) {
-        // Handle specific error cases from the edge function
-        if (fnResponse.error?.includes("already have a session")) {
-          setError("You already have a session in this contest. Each student can only join once.");
-          setLoading(false);
-          return;
-        }
-        if (fnResponse.error === "Username is already taken in this contest") {
-          setError("This username is already taken in this contest. Please choose another.");
-          setLoading(false);
-          return;
-        }
-        if (fnResponse.error === "Contest is not active") {
-          setError("This contest is no longer active.");
-          setLoading(false);
-          return;
-        }
-        throw new Error(fnResponse.error || "Failed to create session");
+      if (!fnResponse?.success) {
+        throw new Error(fnResponse?.error || "Failed to create session");
       }
 
       const session = fnResponse.session;
