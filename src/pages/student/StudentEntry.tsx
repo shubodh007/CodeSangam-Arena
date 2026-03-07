@@ -293,15 +293,6 @@ export default function StudentEntry() {
             </ArenaCardContent>
           </ArenaCard>
 
-          <p className="text-center text-sm text-muted-foreground mt-6">
-            Contest administrator?{" "}
-            <button
-              onClick={() => navigate("/admin/login")}
-              className="text-primary hover:underline"
-            >
-              Admin Login
-            </button>
-          </p>
         </div>
       </main>
     </div>

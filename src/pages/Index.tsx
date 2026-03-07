@@ -36,16 +36,6 @@ const Index = () => {
       <header className="border-b border-border bg-background-secondary/50 backdrop-blur-sm sticky top-0 z-50">
         <div className="container mx-auto px-6 py-4 flex items-center justify-between">
           <Logo size="md" />
-          <div className="flex items-center gap-4">
-            <Button
-              variant="ghost"
-              onClick={() => navigate("/admin/login")}
-              className="text-muted-foreground"
-            >
-              <Shield size={16} />
-              Admin
-            </Button>
-          </div>
         </div>
       </header>
 
@@ -83,15 +73,6 @@ const Index = () => {
                 >
                   <Users size={20} />
                   Enter as Student
-                </Button>
-                <Button
-                  variant="arena-outline"
-                  size="xl"
-                  onClick={() => navigate("/admin/login")}
-                  className="w-full sm:w-auto"
-                >
-                  <Shield size={20} />
-                  Admin Login
                 </Button>
               </div>
             </div>

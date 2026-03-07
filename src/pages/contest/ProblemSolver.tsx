@@ -11,6 +11,11 @@ import { useContestTimer } from "@/hooks/useContestTimer";
 import { useRealtimeContest } from "@/hooks/useRealtimeContest";
 import { FullscreenLockOverlay } from "@/components/FullscreenLockOverlay";
 import {
+  ResizablePanelGroup,
+  ResizablePanel,
+  ResizableHandle,
+} from "@/components/ui/resizable";
+import {
   Clock,
   Play,
   Send,
@@ -144,75 +149,31 @@ export default function ProblemSolver() {
     onContestDeactivated: handleContestDeactivated,
   });
 
-  // Update duration when realtime contest updates
   useEffect(() => {
     if (realtimeContest?.duration_minutes) {
       setContestDuration(realtimeContest.duration_minutes);
     }
   }, [realtimeContest]);
 
-  // Editor ref for Monaco instance
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
 
-  /**
-   * Handle Monaco editor mount - Production-grade configuration
-   * 
-   * CRITICAL: Copy/Paste/Cut are SILENTLY BLOCKED (no warnings)
-   * This matches LeetCode/SmartInterviews behavior during active contests
-   */
   const handleEditorMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
 
-    // ====== SILENTLY BLOCK CLIPBOARD OPERATIONS (NO WARNINGS) ======
-    
-    // Override copy command - do nothing
-    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyC, () => {
-      // Silently blocked - no warning, no action
-    });
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyC, () => {});
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyX, () => {});
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyV, () => {});
 
-    // Override cut command - do nothing
-    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyX, () => {
-      // Silently blocked - no warning, no action
-    });
-
-    // Override paste command - do nothing
-    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyV, () => {
-      // Silently blocked - no warning, no action
-    });
-
-    // Block via DOM events on editor container
     const editorDomNode = editor.getDomNode();
     if (editorDomNode) {
-      // Block drag and drop silently
-      editorDomNode.addEventListener("drop", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-      });
-
-      editorDomNode.addEventListener("dragover", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-      });
-
-      // Block clipboard events silently
-      editorDomNode.addEventListener("paste", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-      });
-
-      editorDomNode.addEventListener("copy", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-      });
-
-      editorDomNode.addEventListener("cut", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-      });
+      editorDomNode.addEventListener("drop", (e) => { e.preventDefault(); e.stopPropagation(); });
+      editorDomNode.addEventListener("dragover", (e) => { e.preventDefault(); e.stopPropagation(); });
+      editorDomNode.addEventListener("paste", (e) => { e.preventDefault(); e.stopPropagation(); });
+      editorDomNode.addEventListener("copy", (e) => { e.preventDefault(); e.stopPropagation(); });
+      editorDomNode.addEventListener("cut", (e) => { e.preventDefault(); e.stopPropagation(); });
     }
   };
 
-  // Handle re-enter fullscreen from lock overlay
   const handleReenterFullscreen = async () => {
     await requestFullscreen();
   };
@@ -236,7 +197,6 @@ export default function ProblemSolver() {
 
   const checkSessionAndFetchData = async (sessionId: string) => {
     try {
-      // Check if session is valid and not disqualified
       const { data: sessionData, error: sessionError } = await supabase
         .from("student_sessions")
         .select("is_disqualified, warnings, contest_id")
@@ -253,7 +213,6 @@ export default function ProblemSolver() {
         return;
       }
 
-      // Fetch contest for duration
       const { data: contestData } = await supabase
         .from("contests")
         .select("duration_minutes, is_active")
@@ -268,7 +227,6 @@ export default function ProblemSolver() {
         }
       }
 
-      // Check if problem is already solved/locked
       const { data: statusData } = await supabase
         .from("student_problem_status")
         .select("is_locked, accepted_at")
@@ -286,7 +244,6 @@ export default function ProblemSolver() {
         return;
       }
 
-      // Record problem open time if not exists
       await supabase
         .from("student_problem_status")
         .upsert({
@@ -295,7 +252,6 @@ export default function ProblemSolver() {
           opened_at: new Date().toISOString(),
         }, { onConflict: "session_id,problem_id" });
 
-      // Fetch problem data
       const { data: problemData, error: problemError } = await supabase
         .from("problems")
         .select("*")
@@ -452,12 +408,10 @@ export default function ProblemSolver() {
           description: `You earned ${data.score} points!`,
         });
 
-        // Redirect after success
         setTimeout(() => {
           navigate(`/contest/${contestId}`);
         }, 2500);
       } else {
-        // Submission failed
         let statusMessage = "";
         switch (data.status) {
           case "wrong_answer":
@@ -648,7 +602,7 @@ export default function ProblemSolver() {
           </div>
 
           <div className="flex items-center gap-4">
-            {/* Timer - Server-driven with visual warning states */}
+            {/* Timer */}
             <div className={`flex items-center gap-2 px-3 py-1.5 rounded-md border transition-all ${
               timerCritical 
                 ? "bg-destructive/10 border-destructive/30 animate-pulse" 
@@ -685,11 +639,7 @@ export default function ProblemSolver() {
 
             {/* Fullscreen indicator */}
             {!isFullscreen && (
-              <Button
-                variant="warning"
-                size="sm"
-                onClick={requestFullscreen}
-              >
+              <Button variant="warning" size="sm" onClick={requestFullscreen}>
                 <Maximize2 size={14} />
                 Re-enter Fullscreen
               </Button>
@@ -698,9 +648,9 @@ export default function ProblemSolver() {
         </div>
       </header>
 
-      {/* Main Content */}
+      {/* Main Content - Resizable Panels */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Fullscreen Lock Overlay - shown when not in fullscreen and anti-cheat is active */}
+        {/* Fullscreen Lock Overlay */}
         {!isFullscreen && !showFullscreenPrompt && session && (
           <FullscreenLockOverlay
             warnings={warnings}
@@ -710,226 +660,215 @@ export default function ProblemSolver() {
           />
         )}
 
-        {/* Left Panel - Problem Description */}
-        <div className="w-[400px] border-r border-border flex flex-col overflow-hidden">
-          <div className="p-4 border-b border-border bg-background-secondary/30">
-            <h2 className="font-semibold text-foreground">{problem.title}</h2>
-          </div>
-          <div className="flex-1 overflow-y-auto p-4">
-            <div className="prose prose-invert prose-sm max-w-none">
-              <h3 className="text-sm font-semibold text-foreground mb-3">Description</h3>
-              <div className="text-sm text-foreground-secondary whitespace-pre-wrap mb-6">
-                {problem.description || "No description provided."}
+        <ResizablePanelGroup direction="horizontal" className="flex-1">
+          {/* Left Panel - Problem Description (resizable) */}
+          <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
+            <div className="h-full flex flex-col overflow-hidden">
+              <div className="p-4 border-b border-border bg-background-secondary/30">
+                <h2 className="font-semibold text-foreground">{problem.title}</h2>
               </div>
+              <div className="flex-1 overflow-y-auto p-4">
+                <div className="prose prose-invert prose-sm max-w-none">
+                  <h3 className="text-sm font-semibold text-foreground mb-3">Description</h3>
+                  <div className="text-sm text-foreground-secondary whitespace-pre-wrap mb-6">
+                    {problem.description || "No description provided."}
+                  </div>
 
-              {sampleTestCases.length > 0 && (
-                <>
-                  <h3 className="text-sm font-semibold text-foreground mb-3">
-                    Sample Test Cases
-                  </h3>
-                  {sampleTestCases.map((tc, index) => (
-                    <div
-                      key={tc.id}
-                      className="mb-4 rounded-lg border border-border overflow-hidden"
-                    >
-                      <div className="bg-background-secondary px-3 py-2 border-b border-border">
-                        <span className="text-xs font-medium text-muted-foreground">
-                          Example {index + 1}
-                        </span>
-                      </div>
-                      <div className="p-3 space-y-3">
-                        <div>
-                          <span className="text-xs font-medium text-muted-foreground">
-                            Input:
-                          </span>
-                          <pre className="mt-1 p-2 rounded bg-editor-bg text-sm font-mono text-foreground overflow-x-auto">
-                            {tc.input}
-                          </pre>
+                  {sampleTestCases.length > 0 && (
+                    <>
+                      <h3 className="text-sm font-semibold text-foreground mb-3">
+                        Sample Test Cases
+                      </h3>
+                      {sampleTestCases.map((tc, index) => (
+                        <div
+                          key={tc.id}
+                          className="mb-4 rounded-lg border border-border overflow-hidden"
+                        >
+                          <div className="bg-background-secondary px-3 py-2 border-b border-border">
+                            <span className="text-xs font-medium text-muted-foreground">
+                              Example {index + 1}
+                            </span>
+                          </div>
+                          <div className="p-3 space-y-3">
+                            <div>
+                              <span className="text-xs font-medium text-muted-foreground">
+                                Input:
+                              </span>
+                              <pre className="mt-1 p-2 rounded bg-[hsl(var(--editor-bg))] text-sm font-mono text-foreground overflow-x-auto">
+                                {tc.input}
+                              </pre>
+                            </div>
+                            <div>
+                              <span className="text-xs font-medium text-muted-foreground">
+                                Output:
+                              </span>
+                              <pre className="mt-1 p-2 rounded bg-[hsl(var(--editor-bg))] text-sm font-mono text-foreground overflow-x-auto">
+                                {tc.expected_output}
+                              </pre>
+                            </div>
+                          </div>
                         </div>
-                        <div>
-                          <span className="text-xs font-medium text-muted-foreground">
-                            Output:
-                          </span>
-                          <pre className="mt-1 p-2 rounded bg-editor-bg text-sm font-mono text-foreground overflow-x-auto">
-                            {tc.expected_output}
-                          </pre>
-                        </div>
-                      </div>
+                      ))}
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          </ResizablePanel>
+
+          <ResizableHandle withHandle />
+
+          {/* Right Panel - Code Editor + Console (resizable vertically) */}
+          <ResizablePanel defaultSize={70} minSize={40}>
+            <ResizablePanelGroup direction="vertical">
+              {/* Code Editor Panel */}
+              <ResizablePanel defaultSize={70} minSize={30}>
+                <div className="h-full flex flex-col overflow-hidden">
+                  {/* Editor Toolbar */}
+                  <div className="px-4 py-2 border-b border-border bg-background-secondary/30 flex items-center justify-between flex-shrink-0">
+                    <div className="flex items-center gap-3">
+                      <select
+                        value={selectedLanguage.id}
+                        onChange={(e) => handleLanguageChange(e.target.value)}
+                        className="px-3 py-1.5 rounded-md border border-border bg-input text-sm text-foreground focus:outline-none focus:border-primary"
+                      >
+                        {LANGUAGES.map((lang) => (
+                          <option key={lang.id} value={lang.id}>
+                            {lang.name}
+                          </option>
+                        ))}
+                      </select>
                     </div>
-                  ))}
-                </>
-              )}
-            </div>
-          </div>
-        </div>
 
-        {/* Right Panel - Code Editor */}
-        <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Editor Toolbar */}
-          <div className="px-4 py-2 border-b border-border bg-background-secondary/30 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <select
-                value={selectedLanguage.id}
-                onChange={(e) => handleLanguageChange(e.target.value)}
-                className="px-3 py-1.5 rounded-md border border-border bg-input text-sm text-foreground focus:outline-none focus:border-primary"
-              >
-                {LANGUAGES.map((lang) => (
-                  <option key={lang.id} value={lang.id}>
-                    {lang.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="arena-secondary"
+                        size="sm"
+                        onClick={handleRun}
+                        disabled={isRunning || isSubmitting || !isFullscreen || isExpired}
+                      >
+                        {isRunning ? (
+                          <Loader2 size={14} className="animate-spin" />
+                        ) : (
+                          <Play size={14} />
+                        )}
+                        Run
+                      </Button>
+                      <Button
+                        variant="arena"
+                        size="sm"
+                        onClick={handleSubmit}
+                        disabled={isRunning || isSubmitting || !isFullscreen || isExpired}
+                      >
+                        {isSubmitting ? (
+                          <Loader2 size={14} className="animate-spin" />
+                        ) : (
+                          <Send size={14} />
+                        )}
+                        Submit
+                      </Button>
+                    </div>
+                  </div>
 
-            <div className="flex items-center gap-2">
-              <Button
-                variant="arena-secondary"
-                size="sm"
-                onClick={handleRun}
-                disabled={isRunning || isSubmitting || !isFullscreen || isExpired}
-              >
-                {isRunning ? (
-                  <Loader2 size={14} className="animate-spin" />
-                ) : (
-                  <Play size={14} />
-                )}
-                Run
-              </Button>
-              <Button
-                variant="arena"
-                size="sm"
-                onClick={handleSubmit}
-                disabled={isRunning || isSubmitting || !isFullscreen || isExpired}
-              >
-                {isSubmitting ? (
-                  <Loader2 size={14} className="animate-spin" />
-                ) : (
-                  <Send size={14} />
-                )}
-                Submit
-              </Button>
-            </div>
-          </div>
+                  {/* Monaco Editor */}
+                  <div className="flex-1 overflow-hidden">
+                    <Editor
+                      height="100%"
+                      language={selectedLanguage.monaco}
+                      value={code}
+                      onChange={(value) => setCode(value || "")}
+                      onMount={handleEditorMount}
+                      theme="vs-dark"
+                      options={{
+                        fontSize: 14,
+                        fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                        fontLigatures: true,
+                        minimap: { enabled: false },
+                        scrollBeyondLastLine: false,
+                        lineNumbers: "on",
+                        glyphMargin: false,
+                        lineDecorationsWidth: 10,
+                        lineNumbersMinChars: 3,
+                        padding: { top: 16, bottom: 16 },
+                        folding: true,
+                        foldingHighlight: true,
+                        foldingStrategy: "indentation",
+                        showFoldingControls: "mouseover",
+                        renderLineHighlight: "line",
+                        renderLineHighlightOnlyWhenFocus: false,
+                        matchBrackets: "always",
+                        bracketPairColorization: { enabled: true },
+                        autoClosingBrackets: "always",
+                        autoClosingQuotes: "always",
+                        autoClosingDelete: "always",
+                        autoSurround: "languageDefined",
+                        autoIndent: "full",
+                        formatOnPaste: false,
+                        formatOnType: false,
+                        tabSize: 4,
+                        insertSpaces: true,
+                        detectIndentation: true,
+                        wordWrap: "on",
+                        wrappingIndent: "same",
+                        quickSuggestions: false,
+                        suggestOnTriggerCharacters: false,
+                        parameterHints: { enabled: false },
+                        wordBasedSuggestions: "off",
+                        snippetSuggestions: "none",
+                        suggest: { enabled: false },
+                        inlineSuggest: { enabled: false },
+                        contextmenu: false,
+                        readOnly: !isFullscreen || isExpired,
+                        dropIntoEditor: { enabled: false },
+                        cursorBlinking: "smooth",
+                        cursorSmoothCaretAnimation: "on",
+                        cursorWidth: 2,
+                        smoothScrolling: true,
+                        renderValidationDecorations: "on",
+                        scrollbar: {
+                          vertical: "visible",
+                          horizontal: "visible",
+                          verticalScrollbarSize: 10,
+                          horizontalScrollbarSize: 10,
+                        },
+                      }}
+                    />
+                  </div>
+                </div>
+              </ResizablePanel>
 
-          {/* Monaco Editor - Production Configuration */}
-          <div className="flex-1 overflow-hidden">
-            <Editor
-              height="100%"
-              language={selectedLanguage.monaco}
-              value={code}
-              onChange={(value) => setCode(value || "")}
-              onMount={handleEditorMount}
-              theme="vs-dark"
-              options={{
-                // Font settings
-                fontSize: 14,
-                fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                fontLigatures: true,
-                
-                // Layout
-                minimap: { enabled: false },
-                scrollBeyondLastLine: false,
-                lineNumbers: "on",
-                glyphMargin: false,
-                lineDecorationsWidth: 10,
-                lineNumbersMinChars: 3,
-                padding: { top: 16, bottom: 16 },
-                
-                // Code folding and structure
-                folding: true,
-                foldingHighlight: true,
-                foldingStrategy: "indentation",
-                showFoldingControls: "mouseover",
-                
-                // Line and bracket highlighting
-                renderLineHighlight: "line",
-                renderLineHighlightOnlyWhenFocus: false,
-                matchBrackets: "always",
-                bracketPairColorization: { enabled: true },
-                
-                // Auto-close and formatting
-                autoClosingBrackets: "always",
-                autoClosingQuotes: "always",
-                autoClosingDelete: "always",
-                autoSurround: "languageDefined",
-                autoIndent: "full",
-                formatOnPaste: false,
-                formatOnType: false,
-                
-                // Tab and indent
-                tabSize: 4,
-                insertSpaces: true,
-                detectIndentation: true,
-                
-                // Word wrap
-                wordWrap: "on",
-                wrappingIndent: "same",
-                
-                // DISABLE all suggestions and hints (NO HINTS policy)
-                quickSuggestions: false,
-                suggestOnTriggerCharacters: false,
-                parameterHints: { enabled: false },
-                wordBasedSuggestions: "off",
-                snippetSuggestions: "none",
-                suggest: { enabled: false },
-                inlineSuggest: { enabled: false },
-                
-                // DISABLE context menu (blocked)
-                contextmenu: false,
-                
-                // Read-only when not in fullscreen
-                readOnly: !isFullscreen || isExpired,
-                
-                // DISABLE drop into editor
-                dropIntoEditor: { enabled: false },
-                
-                // Cursor and selection
-                cursorBlinking: "smooth",
-                cursorSmoothCaretAnimation: "on",
-                cursorWidth: 2,
-                smoothScrolling: true,
-                
-                // Error highlighting only (syntax)
-                renderValidationDecorations: "on",
-                
-                // Scrollbar styling
-                scrollbar: {
-                  vertical: "visible",
-                  horizontal: "visible",
-                  verticalScrollbarSize: 10,
-                  horizontalScrollbarSize: 10,
-                },
-              }}
-            />
-          </div>
+              <ResizableHandle withHandle />
 
-          {/* Console Output Panel */}
-          <div
-            className={`border-t border-border bg-console-bg transition-all duration-200 ${
-              consoleExpanded ? "h-48" : "h-10"
-            }`}
-          >
-            <div
-              className="px-4 py-2 flex items-center justify-between cursor-pointer hover:bg-background-secondary/50"
-              onClick={() => setConsoleExpanded(!consoleExpanded)}
-            >
-              <div className="flex items-center gap-3">
-                <Terminal size={14} className="text-muted-foreground" />
-                <span className="text-sm font-medium text-foreground">Console</span>
-              </div>
-              <button className="text-muted-foreground hover:text-foreground">
-                {consoleExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-              </button>
-            </div>
-            {consoleExpanded && (
-              <div className="px-4 pb-4 h-[calc(100%-40px)] overflow-y-auto">
-                <pre className="text-sm font-mono text-foreground-secondary whitespace-pre-wrap">
-                  {consoleOutput || "Run your code to see output here..."}
-                </pre>
-              </div>
-            )}
-          </div>
-        </div>
+              {/* Console Output Panel (resizable) */}
+              <ResizablePanel defaultSize={30} minSize={10} maxSize={60}>
+                <div className="h-full flex flex-col bg-[hsl(var(--console-bg))] border-t border-border">
+                  <div
+                    className="px-4 py-2 flex items-center justify-between cursor-pointer hover:bg-background-secondary/50 flex-shrink-0"
+                    onClick={() => setConsoleExpanded(!consoleExpanded)}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Terminal size={14} className="text-muted-foreground" />
+                      <span className="text-sm font-medium text-foreground">Console</span>
+                      {(isRunning || isSubmitting) && (
+                        <Loader2 size={12} className="animate-spin text-primary" />
+                      )}
+                    </div>
+                    <button className="text-muted-foreground hover:text-foreground">
+                      {consoleExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+                    </button>
+                  </div>
+                  {consoleExpanded && (
+                    <div className="px-4 pb-4 flex-1 overflow-y-auto">
+                      <pre className="text-sm font-mono text-foreground-secondary whitespace-pre-wrap">
+                        {consoleOutput || "Run your code to see output here..."}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              </ResizablePanel>
+            </ResizablePanelGroup>
+          </ResizablePanel>
+        </ResizablePanelGroup>
       </div>
     </div>
   );
