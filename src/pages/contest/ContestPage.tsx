@@ -21,6 +21,7 @@ import {
   XCircle,
   Shield,
   Maximize2,
+  Trophy,
 } from "lucide-react";
 
 interface ProblemStatus {
