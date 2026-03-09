@@ -247,4 +247,18 @@
     0%, 100% { opacity: 1; }
     50% { opacity: 0.7; }
   }
+
+  /* Leaderboard row glow animation */
+  .leaderboard-row-glow {
+    animation: rowGlow 2s ease-out;
+  }
+
+  @keyframes rowGlow {
+    0% {
+      box-shadow: 0 0 12px hsl(var(--primary-glow) / 0.4);
+    }
+    100% {
+      box-shadow: 0 0 0px hsl(var(--primary-glow) / 0);
+    }
+  }
 }
