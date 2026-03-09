@@ -14,6 +14,7 @@ import ContestLeaderboard from "./pages/admin/ContestLeaderboard";
 import StudentEntry from "./pages/student/StudentEntry";
 import ContestPage from "./pages/contest/ContestPage";
 import ProblemSolver from "./pages/contest/ProblemSolver";
+import ContestLeaderboardPage from "./pages/contest/ContestLeaderboardPage";
 
 const queryClient = new QueryClient();
 
