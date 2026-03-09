@@ -423,6 +423,15 @@ export default function ContestPage() {
               </Button>
             )}
 
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigate(`/contest/${contestId}/leaderboard`)}
+            >
+              <Trophy size={14} />
+              <span className="hidden sm:inline">Leaderboard</span>
+            </Button>
+
             <Button variant="ghost" size="sm" onClick={handleExitClick}>
               <LogOut size={14} />
               Exit
