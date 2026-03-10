@@ -33,7 +33,6 @@ export default function AdminLogin() {
       }
 
       if (data.user) {
-        // Check if user is admin using authoritative user_roles table
         const { data: roleData, error: roleError } = await supabase
           .from("user_roles")
           .select("role")
@@ -63,7 +62,7 @@ export default function AdminLogin() {
   return (
     <div className="min-h-screen bg-background flex flex-col">
       {/* Header */}
-      <header className="border-b border-border">
+      <header className="border-b border-border header-glass">
         <div className="container mx-auto px-6 py-4">
           <Button
             variant="ghost"
@@ -87,7 +86,7 @@ export default function AdminLogin() {
             </div>
           </div>
 
-          <ArenaCard glow>
+          <ArenaCard glow className="arena-glass">
             <ArenaCardHeader>
               <h1 className="text-xl font-semibold text-foreground">
                 Admin Login
@@ -100,8 +99,8 @@ export default function AdminLogin() {
             <ArenaCardContent>
               <form onSubmit={handleLogin} className="space-y-4">
                 {error && (
-                  <div className="flex items-center gap-2 p-3 rounded-md bg-destructive/10 border border-destructive/20 text-destructive text-sm">
-                    <AlertCircle size={16} />
+                  <div className="flex items-center gap-2 p-3 rounded-md bg-destructive/10 border border-destructive/20 text-destructive text-sm animate-fade-in">
+                    <AlertCircle size={16} className="shrink-0" />
                     {error}
                   </div>
                 )}
@@ -172,7 +171,7 @@ export default function AdminLogin() {
             Not an admin?{" "}
             <button
               onClick={() => navigate("/student/entry")}
-              className="text-primary hover:underline"
+              className="text-primary hover:underline transition-colors"
             >
               Enter as Student
             </button>

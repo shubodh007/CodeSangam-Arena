@@ -4,7 +4,8 @@ import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ArenaCard, ArenaCardContent, ArenaCardHeader } from "@/components/ArenaCard";
-import { User, ArrowLeft, AlertCircle, Trophy } from "lucide-react";
+import { AnimatedBackground } from "@/components/AnimatedBackground";
+import { User, ArrowLeft, AlertCircle, Trophy, CheckCircle2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
@@ -64,21 +65,18 @@ export default function StudentEntry() {
     setLoading(true);
 
     try {
-      // Sign in anonymously if not already authenticated
       let userId: string;
       const { data: { session: authSession } } = await supabase.auth.getSession();
       
       if (authSession?.user) {
         userId = authSession.user.id;
       } else {
-        // Create anonymous session for student
         const { data: anonData, error: anonError } = await supabase.auth.signInAnonymously();
         if (anonError) throw anonError;
         if (!anonData.user) throw new Error("Failed to create anonymous session");
         userId = anonData.user.id;
       }
 
-      // Use the session-management edge function for atomic upsert
       const { data: fnResponse, error: fnError } = await supabase.functions.invoke(
         "session-management",
         {
@@ -95,7 +93,6 @@ export default function StudentEntry() {
       }
 
       if (!fnResponse.success) {
-        // Handle specific error cases from the edge function
         if (fnResponse.error?.includes("already have a session")) {
           setError("You already have a session in this contest. Each student can only join once.");
           setLoading(false);
@@ -116,7 +113,6 @@ export default function StudentEntry() {
 
       const session = fnResponse.session;
 
-      // Check if session is disqualified or ended
       if (session.is_disqualified) {
         setError("You have been disqualified from this contest and cannot rejoin.");
         setLoading(false);
@@ -128,7 +124,6 @@ export default function StudentEntry() {
         return;
       }
 
-      // Store session in localStorage for the contest
       localStorage.setItem("arena_session", JSON.stringify({
         sessionId: session.session_id,
         contestId: selectedContest,
@@ -151,9 +146,11 @@ export default function StudentEntry() {
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="min-h-screen bg-background flex flex-col relative">
+      <AnimatedBackground />
+
       {/* Header */}
-      <header className="border-b border-border">
+      <header className="border-b border-border header-glass relative z-10">
         <div className="container mx-auto px-6 py-4">
           <Button
             variant="ghost"
@@ -167,7 +164,7 @@ export default function StudentEntry() {
       </header>
 
       {/* Entry Form */}
-      <main className="flex-1 flex items-center justify-center p-6">
+      <main className="flex-1 flex items-center justify-center p-6 relative z-10">
         <div className="w-full max-w-md animate-slide-up">
           <div className="text-center mb-8">
             <Logo size="lg" className="justify-center mb-6" />
@@ -177,8 +174,7 @@ export default function StudentEntry() {
             </div>
           </div>
 
-
-          <ArenaCard glow>
+          <ArenaCard glow className="arena-glass">
             <ArenaCardHeader>
               <h1 className="text-xl font-semibold text-foreground">
                 Join Contest
@@ -191,8 +187,8 @@ export default function StudentEntry() {
             <ArenaCardContent>
               <form onSubmit={handleEntry} className="space-y-5">
                 {error && (
-                  <div className="flex items-center gap-2 p-3 rounded-md bg-destructive/10 border border-destructive/20 text-destructive text-sm">
-                    <AlertCircle size={16} />
+                  <div className="flex items-center gap-2 p-3 rounded-md bg-destructive/10 border border-destructive/20 text-destructive text-sm animate-fade-in">
+                    <AlertCircle size={16} className="shrink-0" />
                     {error}
                   </div>
                 )}
@@ -242,19 +238,26 @@ export default function StudentEntry() {
                       {contests.map((contest) => (
                         <label
                           key={contest.id}
-                          className={`flex items-start gap-3 p-4 rounded-lg border cursor-pointer transition-all ${
+                          className={`flex items-start gap-3 p-4 rounded-lg border cursor-pointer transition-all duration-200 ${
                             selectedContest === contest.id
-                              ? "border-primary bg-primary/5"
-                              : "border-border bg-secondary/30 hover:border-border-active"
+                              ? "border-primary bg-primary/5 shadow-glow"
+                              : "border-border bg-secondary/30 hover:border-border-active hover:bg-secondary/50"
                           }`}
                         >
+                          <div className="mt-0.5">
+                            {selectedContest === contest.id ? (
+                              <CheckCircle2 size={18} className="text-primary" />
+                            ) : (
+                              <div className="w-[18px] h-[18px] rounded-full border-2 border-muted-foreground/40" />
+                            )}
+                          </div>
                           <input
                             type="radio"
                             name="contest"
                             value={contest.id}
                             checked={selectedContest === contest.id}
                             onChange={() => setSelectedContest(contest.id)}
-                            className="mt-1 accent-primary"
+                            className="sr-only"
                           />
                           <div className="flex-1 min-w-0">
                             <p className="font-medium text-foreground">
@@ -292,7 +295,6 @@ export default function StudentEntry() {
               </form>
             </ArenaCardContent>
           </ArenaCard>
-
         </div>
       </main>
     </div>

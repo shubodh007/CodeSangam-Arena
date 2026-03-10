@@ -8,6 +8,7 @@ interface StatusBadgeProps {
   label?: string;
   showIcon?: boolean;
   size?: "sm" | "md";
+  pulse?: boolean;
 }
 
 const statusConfig: Record<
@@ -56,6 +57,7 @@ export function StatusBadge({
   label,
   showIcon = true,
   size = "md",
+  pulse = false,
 }: StatusBadgeProps) {
   const config = statusConfig[status];
   const Icon = config.icon;
@@ -65,10 +67,11 @@ export function StatusBadge({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border font-medium",
+        "inline-flex items-center gap-1.5 rounded-full border font-medium transition-colors",
         config.bg,
         config.text,
-        size === "sm" ? "px-2 py-0.5 text-xs" : "px-3 py-1 text-sm"
+        size === "sm" ? "px-2 py-0.5 text-xs" : "px-3 py-1 text-sm",
+        pulse && "animate-status-pulse"
       )}
     >
       {showIcon && <Icon size={size === "sm" ? 12 : 14} />}

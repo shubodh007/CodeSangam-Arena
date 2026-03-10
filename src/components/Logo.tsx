@@ -15,10 +15,10 @@ export function Logo({ size = "md", showText = true, className }: LogoProps) {
   };
 
   return (
-    <div className={cn("flex items-center gap-2", className)}>
+    <div className={cn("flex items-center gap-2 group", className)}>
       <div className="relative">
-        <div className="absolute inset-0 bg-primary/20 blur-lg rounded-full" />
-        <div className="relative bg-gradient-to-br from-primary to-accent p-2 rounded-lg">
+        <div className="absolute inset-0 bg-primary/20 blur-lg rounded-full transition-all duration-300 group-hover:bg-primary/30 group-hover:blur-xl" />
+        <div className="relative bg-gradient-to-br from-primary to-accent p-2 rounded-lg transition-transform duration-200 group-hover:scale-105">
           <Code2 size={sizes[size].icon} className="text-primary-foreground" />
         </div>
       </div>
