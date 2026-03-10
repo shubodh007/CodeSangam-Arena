@@ -80,31 +80,26 @@ export default {
           foreground: "hsl(var(--card-foreground))",
           hover: "hsl(var(--card-hover))",
         },
-        // Code editor colors
         editor: {
           bg: "hsl(var(--editor-bg))",
           gutter: "hsl(var(--editor-gutter))",
           lineActive: "hsl(var(--editor-line-active))",
           selection: "hsl(var(--editor-selection))",
         },
-        // Console
         console: {
           bg: "hsl(var(--console-bg))",
           border: "hsl(var(--console-border))",
         },
-        // Timer states
         timer: {
           normal: "hsl(var(--timer-normal))",
           warning: "hsl(var(--timer-warning))",
           critical: "hsl(var(--timer-critical))",
         },
-        // Leaderboard ranks
         rank: {
           gold: "hsl(var(--rank-gold))",
           silver: "hsl(var(--rank-silver))",
           bronze: "hsl(var(--rank-bronze))",
         },
-        // Sidebar
         sidebar: {
           DEFAULT: "hsl(var(--sidebar-background))",
           foreground: "hsl(var(--sidebar-foreground))",
@@ -139,8 +134,31 @@ export default {
           to: { opacity: "1", transform: "translateY(0)" },
         },
         "pulse-glow": {
-          "0%, 100%": { boxShadow: "0 0 20px hsl(var(--primary-glow) / 0.2)" },
-          "50%": { boxShadow: "0 0 30px hsl(var(--primary-glow) / 0.4)" },
+          "0%, 100%": { boxShadow: "0 0 20px hsl(var(--primary-glow) / 0.15)" },
+          "50%": { boxShadow: "0 0 35px hsl(var(--primary-glow) / 0.3)" },
+        },
+        "gradient-shift": {
+          "0%": { backgroundPosition: "0% 50%" },
+          "50%": { backgroundPosition: "100% 50%" },
+          "100%": { backgroundPosition: "0% 50%" },
+        },
+        "orb-float-1": {
+          "0%, 100%": { transform: "translate(0, 0)" },
+          "33%": { transform: "translate(30px, -20px)" },
+          "66%": { transform: "translate(-20px, 15px)" },
+        },
+        "orb-float-2": {
+          "0%, 100%": { transform: "translate(0, 0)" },
+          "33%": { transform: "translate(-25px, 20px)" },
+          "66%": { transform: "translate(20px, -30px)" },
+        },
+        "orb-float-3": {
+          "0%, 100%": { transform: "translate(-50%, -50%)" },
+          "50%": { transform: "translate(-50%, calc(-50% + 20px))" },
+        },
+        "status-pulse": {
+          "0%, 100%": { opacity: "1" },
+          "50%": { opacity: "0.6" },
         },
       },
       animation: {
@@ -148,12 +166,19 @@ export default {
         "accordion-up": "accordion-up 0.2s ease-out",
         "fade-in": "fade-in 0.3s ease-out",
         "slide-up": "slide-up 0.3s ease-out",
-        "pulse-glow": "pulse-glow 2s ease-in-out infinite",
+        "pulse-glow": "pulse-glow 3s ease-in-out infinite",
+        "gradient-shift": "gradient-shift 25s ease-in-out infinite",
+        "orb-float-1": "orb-float-1 35s ease-in-out infinite",
+        "orb-float-2": "orb-float-2 40s ease-in-out infinite",
+        "orb-float-3": "orb-float-3 30s ease-in-out infinite",
+        "status-pulse": "status-pulse 2s ease-in-out infinite",
       },
       boxShadow: {
-        glow: "0 0 20px hsl(var(--primary-glow) / 0.15)",
-        "glow-accent": "0 0 20px hsl(var(--accent) / 0.15)",
+        glow: "0 0 15px hsl(var(--primary-glow) / 0.12), 0 0 40px hsl(var(--primary-glow) / 0.06)",
+        "glow-accent": "0 0 15px hsl(var(--accent) / 0.12), 0 0 40px hsl(var(--accent) / 0.06)",
+        "glow-intense": "0 0 20px hsl(var(--primary-glow) / 0.2), 0 0 60px hsl(var(--primary-glow) / 0.1)",
         card: "0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -2px rgba(0, 0, 0, 0.2)",
+        "card-hover": "0 8px 25px -5px rgba(0, 0, 0, 0.4), 0 4px 10px -4px rgba(0, 0, 0, 0.3)",
       },
     },
   },

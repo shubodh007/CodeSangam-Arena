@@ -20,8 +20,8 @@ export function ArenaCard({
     <div
       style={style}
       className={cn(
-        "bg-card border border-border rounded-lg transition-all duration-200",
-        hover && "hover:bg-card-hover hover:border-border-active cursor-pointer",
+        "bg-card border border-border rounded-lg transition-all duration-250",
+        hover && "hover:bg-card-hover hover:border-border-active hover:-translate-y-1 hover:shadow-card-hover cursor-pointer",
         glow && "shadow-glow",
         className
       )}
@@ -38,12 +38,7 @@ interface ArenaCardHeaderProps {
 
 export function ArenaCardHeader({ children, className }: ArenaCardHeaderProps) {
   return (
-    <div
-      className={cn(
-        "px-6 py-4 border-b border-border",
-        className
-      )}
-    >
+    <div className={cn("px-6 py-4 border-b border-border", className)}>
       {children}
     </div>
   );
@@ -69,12 +64,7 @@ interface ArenaCardFooterProps {
 
 export function ArenaCardFooter({ children, className }: ArenaCardFooterProps) {
   return (
-    <div
-      className={cn(
-        "px-6 py-4 border-t border-border bg-background-secondary/50",
-        className
-      )}
-    >
+    <div className={cn("px-6 py-4 border-t border-border bg-background-secondary/50", className)}>
       {children}
     </div>
   );

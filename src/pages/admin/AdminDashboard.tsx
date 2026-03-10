@@ -4,6 +4,7 @@ import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
 import { ArenaCard, ArenaCardContent, ArenaCardHeader, ArenaCardFooter } from "@/components/ArenaCard";
 import { StatusBadge } from "@/components/StatusBadge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
 import {
   Plus,
@@ -13,7 +14,6 @@ import {
   Clock,
   Users,
   BarChart3,
-  Eye,
   Pencil,
   Power,
 } from "lucide-react";
@@ -46,7 +46,6 @@ export default function AdminDashboard() {
       return;
     }
 
-    // Verify admin role using authoritative user_roles table
     const { data: roleData } = await supabase
       .from("user_roles")
       .select("role")
@@ -112,10 +111,17 @@ export default function AdminDashboard() {
     navigate("/");
   };
 
+  const stats = [
+    { label: "Total Contests", value: contests.length, icon: Trophy, color: "bg-primary/10 text-primary" },
+    { label: "Active Contests", value: contests.filter(c => c.is_active).length, icon: Power, color: "bg-success/10 text-success" },
+    { label: "Total Problems", value: "—", icon: FileText, color: "bg-accent/10 text-accent" },
+    { label: "Active Students", value: "—", icon: Users, color: "bg-warning/10 text-warning" },
+  ];
+
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
-      <header className="border-b border-border bg-background-secondary/50 sticky top-0 z-50">
+      <header className="border-b border-border header-glass sticky top-0 z-50">
         <div className="container mx-auto px-6 py-4 flex items-center justify-between">
           <Logo size="md" />
           <div className="flex items-center gap-3">
@@ -137,16 +143,11 @@ export default function AdminDashboard() {
       <main className="container mx-auto px-6 py-8">
         {/* Stats Overview */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-          {[
-            { label: "Total Contests", value: contests.length, icon: Trophy },
-            { label: "Active Contests", value: contests.filter(c => c.is_active).length, icon: Power },
-            { label: "Total Problems", value: "—", icon: FileText },
-            { label: "Active Students", value: "—", icon: Users },
-          ].map((stat) => (
-            <ArenaCard key={stat.label}>
+          {stats.map((stat, i) => (
+            <ArenaCard key={stat.label} className="animate-slide-up" style={{ animationDelay: `${i * 80}ms` } as React.CSSProperties}>
               <ArenaCardContent className="flex items-center gap-4">
-                <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center">
-                  <stat.icon size={24} className="text-primary" />
+                <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${stat.color.split(" ")[0]}`}>
+                  <stat.icon size={24} className={stat.color.split(" ")[1]} />
                 </div>
                 <div>
                   <p className="text-2xl font-bold text-foreground">{stat.value}</p>
@@ -164,8 +165,23 @@ export default function AdminDashboard() {
 
         {/* Contest List */}
         {loading ? (
-          <div className="flex items-center justify-center py-20">
-            <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+          <div className="grid gap-4">
+            {[1, 2, 3].map((i) => (
+              <ArenaCard key={i}>
+                <ArenaCardContent className="flex items-center justify-between">
+                  <div className="flex-1 space-y-3">
+                    <Skeleton className="h-5 w-48" />
+                    <Skeleton className="h-4 w-72" />
+                    <Skeleton className="h-3 w-32" />
+                  </div>
+                  <div className="flex gap-2">
+                    <Skeleton className="h-9 w-9 rounded-md" />
+                    <Skeleton className="h-9 w-9 rounded-md" />
+                    <Skeleton className="h-9 w-24 rounded-md" />
+                  </div>
+                </ArenaCardContent>
+              </ArenaCard>
+            ))}
           </div>
         ) : contests.length === 0 ? (
           <ArenaCard>
@@ -185,8 +201,13 @@ export default function AdminDashboard() {
           </ArenaCard>
         ) : (
           <div className="grid gap-4">
-            {contests.map((contest) => (
-              <ArenaCard key={contest.id} hover>
+            {contests.map((contest, i) => (
+              <ArenaCard
+                key={contest.id}
+                hover
+                className="animate-slide-up"
+                style={{ animationDelay: `${i * 60}ms` } as React.CSSProperties}
+              >
                 <ArenaCardContent className="flex items-center justify-between">
                   <div className="flex-1 min-w-0 mr-4">
                     <div className="flex items-center gap-3 mb-2">
@@ -196,6 +217,7 @@ export default function AdminDashboard() {
                       <StatusBadge 
                         status={contest.is_active ? "active" : "inactive"} 
                         size="sm"
+                        pulse={contest.is_active}
                       />
                     </div>
                     <p className="text-sm text-muted-foreground line-clamp-1 mb-2">

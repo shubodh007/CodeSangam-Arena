@@ -4,6 +4,7 @@ import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
 import { ArenaCard, ArenaCardContent, ArenaCardHeader } from "@/components/ArenaCard";
 import { StatusBadge } from "@/components/StatusBadge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
 import { AddWarningDialog } from "@/components/admin/AddWarningDialog";
 import { ResetWarningsDialog } from "@/components/admin/ResetWarningsDialog";
@@ -70,7 +71,6 @@ export default function ContestLeaderboard() {
       return;
     }
 
-    // Verify admin role using authoritative user_roles table
     const { data: roleData } = await supabase
       .from("user_roles")
       .select("role")
@@ -92,43 +92,24 @@ export default function ContestLeaderboard() {
       .channel("leaderboard-updates")
       .on(
         "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "student_problem_status",
-        },
-        () => {
-          fetchLeaderboard();
-        }
+        { event: "*", schema: "public", table: "student_problem_status" },
+        () => { fetchLeaderboard(); }
       )
       .on(
         "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "submissions",
-        },
-        () => {
-          fetchLeaderboard();
-        }
+        { event: "*", schema: "public", table: "submissions" },
+        () => { fetchLeaderboard(); }
       )
       .on(
         "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "student_sessions",
-        },
-        () => {
-          fetchLeaderboard();
-        }
+        { event: "*", schema: "public", table: "student_sessions" },
+        () => { fetchLeaderboard(); }
       )
       .subscribe();
   };
 
   const fetchContestAndLeaderboard = async () => {
     try {
-      // Fetch contest details
       const { data: contestData, error: contestError } = await supabase
         .from("contests")
         .select("id, title, is_active")
@@ -148,7 +129,6 @@ export default function ContestLeaderboard() {
 
   const fetchLeaderboard = async () => {
     try {
-      // Use admin view that includes warnings and disqualification status
       const { data, error } = await supabase
         .from("admin_leaderboard_view")
         .select("*")
@@ -167,26 +147,44 @@ export default function ContestLeaderboard() {
     const hrs = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
     const secs = Math.floor(seconds % 60);
-    if (hrs > 0) {
-      return `${hrs}h ${mins}m ${secs}s`;
-    }
-    if (mins > 0) {
-      return `${mins}m ${secs}s`;
-    }
+    if (hrs > 0) return `${hrs}h ${mins}m ${secs}s`;
+    if (mins > 0) return `${mins}m ${secs}s`;
     return `${secs}s`;
   };
 
-  const getRankIcon = (rank: number) => {
-    if (rank === 1) return <Medal className="text-yellow-500" size={20} />;
-    if (rank === 2) return <Medal className="text-gray-400" size={20} />;
-    if (rank === 3) return <Medal className="text-amber-600" size={20} />;
-    return <span className="text-muted-foreground font-mono">{rank}</span>;
+  const getRankDisplay = (rank: number) => {
+    if (rank === 1) return <span className="text-lg">🥇</span>;
+    if (rank === 2) return <span className="text-lg">🥈</span>;
+    if (rank === 3) return <span className="text-lg">🥉</span>;
+    return <span className="text-muted-foreground font-mono text-sm">{rank}</span>;
+  };
+
+  const getRankRowClass = (rank: number, isDisqualified: boolean) => {
+    if (isDisqualified) return "opacity-50 bg-destructive/5";
+    if (rank === 1) return "bg-rank-gold/5 border-l-2 border-l-rank-gold";
+    if (rank === 2) return "bg-rank-silver/5 border-l-2 border-l-rank-silver";
+    if (rank === 3) return "bg-rank-bronze/5 border-l-2 border-l-rank-bronze";
+    return "";
   };
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+      <div className="min-h-screen bg-background">
+        <header className="border-b border-border header-glass sticky top-0 z-50">
+          <div className="container mx-auto px-6 py-4 flex items-center gap-4">
+            <Skeleton className="h-9 w-16" />
+            <Skeleton className="h-8 w-32" />
+          </div>
+        </header>
+        <main className="container mx-auto px-6 py-8">
+          <Skeleton className="h-8 w-64 mb-8" />
+          <div className="grid grid-cols-3 gap-4 mb-8">
+            {[1, 2, 3].map(i => (
+              <ArenaCard key={i}><ArenaCardContent><Skeleton className="h-16 w-full" /></ArenaCardContent></ArenaCard>
+            ))}
+          </div>
+          <ArenaCard><ArenaCardContent><Skeleton className="h-64 w-full" /></ArenaCardContent></ArenaCard>
+        </main>
       </div>
     );
   }
@@ -194,7 +192,7 @@ export default function ContestLeaderboard() {
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
-      <header className="border-b border-border bg-background-secondary/50 sticky top-0 z-50">
+      <header className="border-b border-border header-glass sticky top-0 z-50">
         <div className="container mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <Button
@@ -216,7 +214,7 @@ export default function ContestLeaderboard() {
 
       <main className="container mx-auto px-6 py-8">
         {/* Contest Info */}
-        <div className="mb-8">
+        <div className="mb-8 animate-slide-up">
           <div className="flex items-center gap-3 mb-2">
             <Trophy className="text-primary" size={28} />
             <h1 className="text-2xl font-bold text-foreground">
@@ -224,7 +222,8 @@ export default function ContestLeaderboard() {
             </h1>
             <StatusBadge 
               status={contest?.is_active ? "active" : "inactive"} 
-              size="sm" 
+              size="sm"
+              pulse={contest?.is_active}
             />
           </div>
           <p className="text-muted-foreground">
@@ -234,47 +233,27 @@ export default function ContestLeaderboard() {
 
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-          <ArenaCard>
-            <ArenaCardContent className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center">
-                <Users size={24} className="text-primary" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-foreground">{leaderboard.length}</p>
-                <p className="text-sm text-muted-foreground">Participants</p>
-              </div>
-            </ArenaCardContent>
-          </ArenaCard>
-          <ArenaCard>
-            <ArenaCardContent className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-lg bg-success/10 flex items-center justify-center">
-                <Trophy size={24} className="text-success" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-foreground">
-                  {leaderboard.filter(e => e.problems_solved > 0).length}
-                </p>
-                <p className="text-sm text-muted-foreground">With Solved Problems</p>
-              </div>
-            </ArenaCardContent>
-          </ArenaCard>
-          <ArenaCard>
-            <ArenaCardContent className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-lg bg-destructive/10 flex items-center justify-center">
-                <AlertTriangle size={24} className="text-destructive" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-foreground">
-                  {leaderboard.filter(e => e.is_disqualified).length}
-                </p>
-                <p className="text-sm text-muted-foreground">Disqualified</p>
-              </div>
-            </ArenaCardContent>
-          </ArenaCard>
+          {[
+            { label: "Participants", value: leaderboard.length, icon: Users, color: "bg-primary/10 text-primary" },
+            { label: "With Solved Problems", value: leaderboard.filter(e => e.problems_solved > 0).length, icon: Trophy, color: "bg-success/10 text-success" },
+            { label: "Disqualified", value: leaderboard.filter(e => e.is_disqualified).length, icon: AlertTriangle, color: "bg-destructive/10 text-destructive" },
+          ].map((stat, i) => (
+            <ArenaCard key={stat.label} className="animate-slide-up" style={{ animationDelay: `${i * 80}ms` } as React.CSSProperties}>
+              <ArenaCardContent className="flex items-center gap-4">
+                <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${stat.color.split(" ")[0]}`}>
+                  <stat.icon size={24} className={stat.color.split(" ")[1]} />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-foreground">{stat.value}</p>
+                  <p className="text-sm text-muted-foreground">{stat.label}</p>
+                </div>
+              </ArenaCardContent>
+            </ArenaCard>
+          ))}
         </div>
 
         {/* Leaderboard Table */}
-        <ArenaCard>
+        <ArenaCard className="animate-slide-up" style={{ animationDelay: "240ms" } as React.CSSProperties}>
           <ArenaCardHeader className="border-b border-border">
             <h2 className="text-lg font-semibold text-foreground">Rankings</h2>
           </ArenaCardHeader>
@@ -297,8 +276,8 @@ export default function ContestLeaderboard() {
                     <TableHead>Username</TableHead>
                     <TableHead className="text-center">Score</TableHead>
                     <TableHead className="text-center">Solved</TableHead>
-                    <TableHead className="text-center">Wrong Attempts</TableHead>
-                    <TableHead className="text-center">Total Time</TableHead>
+                    <TableHead className="text-center">Wrong</TableHead>
+                    <TableHead className="text-center">Time</TableHead>
                     <TableHead className="text-center">Warnings</TableHead>
                     <TableHead className="text-center">Status</TableHead>
                     <TableHead className="text-center w-24">Actions</TableHead>
@@ -308,18 +287,13 @@ export default function ContestLeaderboard() {
                   {leaderboard.map((entry) => (
                     <TableRow
                       key={entry.session_id}
-                      className={entry.is_disqualified ? "opacity-50 bg-destructive/5" : ""}
+                      className={`transition-colors ${getRankRowClass(entry.rank, entry.is_disqualified)}`}
                     >
                       <TableCell className="text-center">
-                        {getRankIcon(entry.rank)}
+                        {getRankDisplay(entry.rank)}
                       </TableCell>
                       <TableCell className="font-medium">
                         {entry.username}
-                        {entry.rank <= 3 && entry.problems_solved > 0 && (
-                          <span className="ml-2 text-xs text-primary">
-                            {entry.rank === 1 ? "🥇" : entry.rank === 2 ? "🥈" : "🥉"}
-                          </span>
-                        )}
                       </TableCell>
                       <TableCell className="text-center font-bold text-primary">
                         {entry.total_score}
@@ -383,7 +357,7 @@ export default function ContestLeaderboard() {
         </ArenaCard>
 
         {/* Legend */}
-        <div className="mt-6 p-4 rounded-lg bg-background-secondary/50 border border-border">
+        <div className="mt-6 p-4 rounded-lg bg-background-secondary/50 border border-border animate-fade-in">
           <h3 className="text-sm font-medium text-foreground mb-2">Ranking Criteria (in order):</h3>
           <ol className="text-sm text-muted-foreground list-decimal list-inside space-y-1">
             <li>Total Score (higher is better)</li>
