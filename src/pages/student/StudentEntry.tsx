@@ -91,28 +91,26 @@ export default function StudentEntry() {
       );
 
       if (fnError) {
-        // supabase.functions.invoke throws FunctionsHttpError for non-2xx
-        // The response body is still available in fnResponse
-        const errorBody = fnResponse;
-        if (errorBody?.error?.includes("already have a session")) {
-          setError("You already have a session in this contest. Each student can only join once.");
-          setLoading(false);
-          return;
-        }
-        if (errorBody?.error?.includes("Username is already taken")) {
-          setError("This username is already taken in this contest. Please choose another.");
-          setLoading(false);
-          return;
-        }
-        if (errorBody?.error?.includes("Contest is not active")) {
-          setError("This contest is no longer active.");
-          setLoading(false);
-          return;
-        }
         throw fnError;
       }
 
       if (!fnResponse.success) {
+        // Handle specific error cases from the edge function
+        if (fnResponse.error?.includes("already have a session")) {
+          setError("You already have a session in this contest. Each student can only join once.");
+          setLoading(false);
+          return;
+        }
+        if (fnResponse.error === "Username is already taken in this contest") {
+          setError("This username is already taken in this contest. Please choose another.");
+          setLoading(false);
+          return;
+        }
+        if (fnResponse.error === "Contest is not active") {
+          setError("This contest is no longer active.");
+          setLoading(false);
+          return;
+        }
         throw new Error(fnResponse.error || "Failed to create session");
       }
 
