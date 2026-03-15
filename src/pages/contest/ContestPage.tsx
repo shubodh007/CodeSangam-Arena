@@ -5,11 +5,14 @@ import { Button } from "@/components/ui/button";
 import { ArenaCard, ArenaCardContent } from "@/components/ArenaCard";
 import { StatusBadge } from "@/components/StatusBadge";
 import { ExitContestDialog } from "@/components/ExitContestDialog";
+import { CircularProgress } from "@/components/ui/circular-progress";
 import { supabase } from "@/integrations/supabase/client";
 import { useAntiCheat } from "@/hooks/useAntiCheat";
 import { useContestTimer } from "@/hooks/useContestTimer";
 import { useRealtimeContest } from "@/hooks/useRealtimeContest";
 import { useToast } from "@/hooks/use-toast";
+import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
+import { useKeyboardStore } from "@/store/keyboardStore";
 import {
   Clock,
   FileText,
@@ -18,10 +21,12 @@ import {
   ChevronRight,
   Lock,
   CheckCircle2,
+  AlertCircle,
   XCircle,
   Shield,
   Maximize2,
   Trophy,
+  Keyboard,
 } from "lucide-react";
 
 interface ProblemStatus {
@@ -30,6 +35,8 @@ interface ProblemStatus {
   accepted_at: string | null;
   opened_at: string | null;
   wrong_attempts: number;
+  partial_score: number;
+  best_test_cases_passed: number;
 }
 
 interface SessionData {
@@ -129,6 +136,7 @@ export default function ContestPage() {
   }, [toast]);
 
   const {
+    timeRemaining,
     formattedTime,
     timerColorClass,
     isExpired,
@@ -231,6 +239,9 @@ export default function ContestPage() {
     if (status?.accepted_at || status?.is_locked) {
       return "accepted";
     }
+    if ((status?.partial_score || 0) > 0) {
+      return "partial";
+    }
     if (status?.opened_at) {
       return "pending";
     }
@@ -246,9 +257,7 @@ export default function ContestPage() {
     let total = 0;
     problems.forEach((p) => {
       const status = problemStatuses.get(p.id);
-      if (status?.accepted_at) {
-        total += p.score;
-      }
+      total += status?.partial_score || 0;
     });
     return total;
   };
@@ -263,6 +272,28 @@ export default function ContestPage() {
     });
     return count;
   };
+
+  // ── Keyboard shortcuts ──────────────────────────────────────────────────
+  const { setModalOpen } = useKeyboardStore();
+
+  // Alt+1…9 → navigate to problem by index
+  useKeyboardShortcuts(
+    [
+      ...problems.slice(0, 9).map((problem, idx) => ({
+        key: `alt+${idx + 1}`,
+        description: `Go to Problem ${idx + 1}`,
+        action: () => navigate(`/contest/${contestId}/problem/${problem.id}`),
+        enabled: isFullscreen && !isExpired,
+      })),
+      {
+        key: "?",
+        description: "Show keyboard shortcuts",
+        action: () => setModalOpen(true),
+        enabled: true,
+      },
+    ],
+    { context: "outside-monaco" }
+  );
 
   // Disqualified screen
   if (showDisqualified) {
@@ -356,6 +387,14 @@ export default function ContestPage() {
 
   return (
     <div className="min-h-screen bg-background flex flex-col select-none">
+      {/* Skip to content */}
+      <a
+        href="#contest-main"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-[100] focus:px-4 focus:py-2 focus:bg-primary focus:text-primary-foreground focus:rounded-md"
+      >
+        Skip to main content
+      </a>
+
       {/* Header */}
       <header className="border-b border-border bg-background-secondary/50 sticky top-0 z-50">
         <div className="container mx-auto px-6 py-3 flex items-center justify-between">
@@ -383,19 +422,32 @@ export default function ContestPage() {
 
             {/* Timer - Server-driven with visual warning states */}
             <div className={`flex items-center gap-2 px-3 py-1.5 rounded-md border transition-all ${
-              timerCritical 
-                ? "bg-destructive/10 border-destructive/30 animate-pulse" 
-                : timerWarning 
-                  ? "bg-warning/10 border-warning/30" 
+              timerCritical
+                ? "bg-destructive/10 border-destructive/30 animate-pulse"
+                : timerWarning
+                  ? "bg-warning/10 border-warning/30"
                   : "bg-secondary border-border"
             }`}>
-              <Clock size={18} className={timerColorClass} />
+              <CircularProgress
+                value={Math.round((timeRemaining / (contest.duration_minutes * 60)) * 100)}
+                size={28}
+                strokeWidth={3}
+                className={timerColorClass}
+              />
               <span className={`font-mono text-lg font-bold ${timerColorClass}`}>
                 {formattedTime}
               </span>
               {timerCritical && (
                 <span className="text-xs text-destructive font-medium">HURRY!</span>
               )}
+              {/* Accessible announcement for screen readers */}
+              <span
+                aria-live="assertive"
+                aria-atomic="true"
+                className="sr-only"
+              >
+                {timerCritical ? `Critical: ${formattedTime} remaining` : timerWarning ? `Warning: ${formattedTime} remaining` : ""}
+              </span>
             </div>
 
             {/* Warnings */}
@@ -433,6 +485,19 @@ export default function ContestPage() {
               <span className="hidden sm:inline">Leaderboard</span>
             </Button>
 
+            {/* Keyboard shortcuts */}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setModalOpen(true)}
+              className="gap-1.5 text-muted-foreground hover:text-foreground group"
+              title="Keyboard shortcuts (?)"
+            >
+              <Keyboard size={14} className="group-hover:text-primary transition-colors" />
+              <span className="hidden lg:inline text-xs">Shortcuts</span>
+              <span className="hidden lg:inline font-mono text-[10px] border border-border rounded px-1 py-px opacity-50">?</span>
+            </Button>
+
             <Button variant="ghost" size="sm" onClick={handleExitClick}>
               <LogOut size={14} />
               Exit
@@ -448,7 +513,7 @@ export default function ContestPage() {
         onConfirm={handleConfirmExit}
       />
       {/* Main Content */}
-      <main className="flex-1 container mx-auto px-6 py-8">
+      <main id="contest-main" className="flex-1 container mx-auto px-6 py-8">
         <div className="max-w-4xl mx-auto">
           {/* Contest Info */}
           <div className="mb-8">
@@ -522,11 +587,13 @@ export default function ContestPage() {
                     <ArenaCardContent className="flex items-center justify-between py-4">
                       <div className="flex items-center gap-4">
                         <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-sm font-bold ${
-                          isLocked 
-                            ? "bg-success/10 text-success" 
+                          isLocked
+                            ? "bg-success/10 text-success"
+                            : status === "partial"
+                            ? "bg-warning/10 text-warning"
                             : "bg-secondary text-foreground"
                         }`}>
-                          {isLocked ? <CheckCircle2 size={20} /> : index + 1}
+                          {isLocked ? <CheckCircle2 size={20} /> : status === "partial" ? <AlertCircle size={20} /> : index + 1}
                         </div>
                         <div>
                           <h4 className="font-medium text-foreground">
@@ -554,6 +621,11 @@ export default function ContestPage() {
                           </Button>
                         ) : (
                           <>
+                            {status === "partial" && (
+                              <span className="text-xs font-medium text-warning px-2 py-0.5 rounded bg-warning/10">
+                                {problemStatuses.get(problem.id)?.partial_score || 0}/{problem.score} pts
+                              </span>
+                            )}
                             {status === "pending" && (
                               <StatusBadge status="pending" label="In Progress" size="sm" />
                             )}
@@ -562,7 +634,7 @@ export default function ContestPage() {
                               size="sm"
                               onClick={() => navigate(`/contest/${contestId}/problem/${problem.id}`)}
                             >
-                              {status === "pending" ? "Continue" : "Solve"}
+                              {status === "pending" || status === "partial" ? "Continue" : "Solve"}
                               <ChevronRight size={14} />
                             </Button>
                           </>

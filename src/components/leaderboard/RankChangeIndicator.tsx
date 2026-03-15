@@ -27,17 +27,14 @@ export function RankChangeIndicator({ change, className }: RankChangeIndicatorPr
 
   if (change.direction === "up") {
     return (
-      <span className={cn("inline-flex items-center gap-0.5 text-success", className)}>
+      <span className={cn("inline-flex items-center gap-0.5 text-success animate-rank-up", className)}>
         <TrendingUp size={12} />
-        <span className="text-[10px] font-bold">
-          +{change.previousRank - (change.previousRank - Math.abs(change.previousRank))}
-        </span>
       </span>
     );
   }
 
   return (
-    <span className={cn("inline-flex items-center gap-0.5 text-destructive", className)}>
+    <span className={cn("inline-flex items-center gap-0.5 text-destructive animate-rank-down", className)}>
       <TrendingDown size={12} />
     </span>
   );

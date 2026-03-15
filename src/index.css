@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Rubik:wght@400;500;600;700;800&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -104,6 +104,17 @@
     --sidebar-accent-foreground: 210 20% 90%;
     --sidebar-border: 217 19% 18%;
     --sidebar-ring: 160 84% 39%;
+
+    /* Supplemental elevation token */
+    --bg-elevated: 220 13% 15%;
+
+    /* Border alias */
+    --border-default: var(--border);
+
+    /* Shadow scale */
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.4);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.5);
+    --shadow-lg: 0 8px 30px rgba(0,0,0,0.6);
   }
 
   * {
@@ -333,6 +344,23 @@
     100% { box-shadow: 0 0 0px hsl(var(--primary-glow) / 0); }
   }
 
+  /* Shimmer skeleton gradient utility */
+  .animate-shimmer {
+    background: linear-gradient(
+      90deg,
+      hsl(var(--muted)) 0%,
+      hsl(var(--muted-foreground) / 0.1) 50%,
+      hsl(var(--muted)) 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmerGradient 2s linear infinite;
+  }
+
+  @keyframes shimmerGradient {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+
   /* Reduced motion */
   @media (prefers-reduced-motion: reduce) {
     .animate-fade-in,
@@ -343,10 +371,19 @@
     .animate-hero-cta,
     .animate-scroll-indicator,
     .animate-pulse-subtle,
-    .leaderboard-row-glow {
+    .leaderboard-row-glow,
+    .animate-submission-success,
+    .animate-submission-error,
+    .animate-rank-up,
+    .animate-rank-down,
+    .animate-float,
+    .animate-float-2,
+    .animate-float-3,
+    .animate-shimmer {
       animation: none !important;
       opacity: 1 !important;
       transform: none !important;
+      background-position: 0 !important;
     }
     .reveal-hidden {
       opacity: 1;

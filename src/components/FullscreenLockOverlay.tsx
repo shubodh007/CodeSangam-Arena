@@ -1,3 +1,4 @@
+import { useRef, useEffect } from "react";
 import { Maximize2, AlertTriangle, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -14,6 +15,9 @@ export function FullscreenLockOverlay({
   lastWarning,
   onReenterFullscreen,
 }: FullscreenLockOverlayProps) {
+  const btnRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => { btnRef.current?.focus(); }, []);
+
   return (
     <div className="fixed inset-0 z-50 bg-background/95 backdrop-blur-sm flex items-center justify-center">
       <div className="max-w-md text-center animate-fade-in p-6">
@@ -57,9 +61,10 @@ export function FullscreenLockOverlay({
           Re-enter fullscreen to continue your contest. Your warning count will not reset.
         </p>
 
-        <Button 
-          variant="arena" 
-          size="lg" 
+        <Button
+          ref={btnRef}
+          variant="arena"
+          size="lg"
           onClick={onReenterFullscreen}
           className="w-full"
         >

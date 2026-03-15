@@ -3,18 +3,28 @@ import { useParams, useNavigate } from "react-router-dom";
 import Editor, { type Monaco, type OnMount } from "@monaco-editor/react";
 import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ArenaCard, ArenaCardContent } from "@/components/ArenaCard";
+import { CustomTestPanel } from "@/components/CustomTestPanel";
+import { SubmissionFeedback, type SubmissionState } from "@/components/feedback/SubmissionFeedback";
+import { RunOutput } from "@/components/feedback/RunOutput";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAntiCheat } from "@/hooks/useAntiCheat";
+import { useEnhancedAntiCheat } from "@/hooks/useEnhancedAntiCheat";
+import { ViolationWarning } from "@/components/contest/ViolationWarning";
 import { useContestTimer } from "@/hooks/useContestTimer";
 import { useRealtimeContest } from "@/hooks/useRealtimeContest";
 import { FullscreenLockOverlay } from "@/components/FullscreenLockOverlay";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { defineArenaTheme } from "@/lib/monaco-theme";
 import {
   ResizablePanelGroup,
   ResizablePanel,
   ResizableHandle,
 } from "@/components/ui/resizable";
+import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
+import { useKeyboardStore } from "@/store/keyboardStore";
 import {
   Clock,
   Play,
@@ -24,10 +34,10 @@ import {
   Loader2,
   Terminal,
   Maximize2,
-  Minimize2,
   Shield,
   XCircle,
   CheckCircle2,
+  Keyboard,
 } from "lucide-react";
 
 interface Problem {
@@ -74,7 +84,10 @@ export default function ProblemSolver() {
   const [isRunning, setIsRunning] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [consoleOutput, setConsoleOutput] = useState<string>("");
-  const [consoleExpanded, setConsoleExpanded] = useState(true);
+  const [submissionState, setSubmissionState] = useState<SubmissionState>({ status: "idle" });
+  const [activeMobileTab, setActiveMobileTab] = useState<"problem" | "code" | "console">("code");
+
+  const isMobile = useMediaQuery("(max-width: 767px)");
   
   const [showFullscreenPrompt, setShowFullscreenPrompt] = useState(true);
   const [showDisqualified, setShowDisqualified] = useState(false);
@@ -103,10 +116,20 @@ export default function ProblemSolver() {
     requestFullscreen,
     fetchWarnings,
     warningLimit,
+    reportViolation,
   } = useAntiCheat({
     sessionId: session?.sessionId || "",
     onDisqualified: handleDisqualified,
     onWarning: handleWarning,
+    enabled: !!session && !showFullscreenPrompt,
+  });
+
+  // Enhanced anti-cheat: additional OS-level detections (Alt+Tab, Windows key,
+  // screenshot shortcuts, virtual desktop, multi-monitor mouse leave).
+  // Feeds violations through the same reportViolation path so warning state,
+  // toasts, and disqualification logic remain unified.
+  useEnhancedAntiCheat({
+    reportViolation,
     enabled: !!session && !showFullscreenPrompt,
   });
 
@@ -157,12 +180,36 @@ export default function ProblemSolver() {
 
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
 
+  // Stable refs for Monaco command callbacks (avoids re-registration on every render)
+  const handleRunRef    = useRef<() => void>(() => {});
+  const handleSubmitRef = useRef<() => void>(() => {});
+  const handleSaveRef   = useRef<() => void>(() => {});
+
   const handleEditorMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
 
+    // Register and apply the custom arena-dark theme
+    defineArenaTheme(monaco);
+    editor.updateOptions({ theme: "arena-dark" });
+
+    // Block copy/paste/cut (anti-cheat)
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyC, () => {});
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyX, () => {});
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyV, () => {});
+
+    // Keyboard shortcuts — call through refs so callbacks are always fresh
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyR, () => {
+      handleRunRef.current();
+    });
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
+      handleSubmitRef.current();
+    });
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+      handleSaveRef.current();
+    });
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK, () => {
+      editor.trigger("keyboard", "editor.action.formatDocument", {});
+    });
 
     const editorDomNode = editor.getDomNode();
     if (editorDomNode) {
@@ -376,9 +423,11 @@ export default function ProblemSolver() {
 
   const handleSubmit = async () => {
     if (!session) return;
-    
+
     setIsSubmitting(true);
-    setConsoleOutput("🔄 Submitting code for evaluation against hidden test cases...\n");
+    setSubmissionState({ status: "running" });
+    // Switch to console tab to show feedback
+    if (isMobile) setActiveMobileTab("console");
 
     try {
       const { data, error } = await supabase.functions.invoke("execute-code", {
@@ -394,58 +443,62 @@ export default function ProblemSolver() {
 
       if (error) throw error;
 
-      if (data.success) {
-        setConsoleOutput(
-          "✅ Submission Accepted!\n\n" +
-          `All ${data.totalTestCases} hidden test cases passed.\n` +
-          `Score: +${data.score} points\n` +
-          `Execution Time: ${data.executionTime}ms\n\n` +
-          "Redirecting to problem list..."
-        );
+      if (data.status === "accepted") {
+        setSubmissionState({
+          status: "accepted",
+          score: data.score,
+          maxScore: data.maxScore,
+          totalTestCases: data.totalTestCases,
+          executionTime: data.executionTime,
+        });
 
         toast({
-          title: "🎉 Problem Solved!",
+          title: "Problem Solved!",
           description: `You earned ${data.score} points!`,
         });
 
         setTimeout(() => {
           navigate(`/contest/${contestId}`);
         }, 2500);
-      } else {
-        let statusMessage = "";
-        switch (data.status) {
-          case "wrong_answer":
-            statusMessage = "❌ Wrong Answer";
-            break;
-          case "compilation_error":
-            statusMessage = "❌ Compilation Error";
-            break;
-          case "runtime_error":
-            statusMessage = "❌ Runtime Error";
-            break;
-          default:
-            statusMessage = "❌ Failed";
-        }
-
-        setConsoleOutput(
-          `${statusMessage}\n\n` +
-          `Test Cases Passed: ${data.testCasesPassed}/${data.totalTestCases}\n` +
-          `Failed at: Test Case ${data.failedTestCase}\n\n` +
-          (data.error ? `Error Details:\n${data.error}\n\n` : "") +
-          "Wrong attempts have been recorded."
-        );
+      } else if (data.status === "partial") {
+        setSubmissionState({
+          status: "partial",
+          score: data.score,
+          maxScore: data.maxScore,
+          testCasesPassed: data.testCasesPassed,
+          totalTestCases: data.totalTestCases,
+        });
 
         toast({
-          title: statusMessage,
-          description: `Failed at test case ${data.failedTestCase}. Try again!`,
+          title: "Partial Solution",
+          description: `${data.testCasesPassed}/${data.totalTestCases} test cases passed (${data.score} pts). Keep going!`,
+        });
+
+        setIsSubmitting(false);
+      } else {
+        setSubmissionState({
+          status: "failed",
+          testCasesPassed: data.testCasesPassed ?? 0,
+          totalTestCases: data.totalTestCases ?? 1,
+          error: data.error,
+        });
+
+        toast({
+          title: "Submission Failed",
+          description: "No test cases passed. Check your solution and try again.",
           variant: "destructive",
         });
-        
+
         setIsSubmitting(false);
       }
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : "Unknown error";
-      setConsoleOutput(`❌ Error: ${errorMessage}`);
+      setSubmissionState({
+        status: "failed",
+        testCasesPassed: 0,
+        totalTestCases: 1,
+        error: errorMessage,
+      });
       toast({
         title: "Submission Error",
         description: errorMessage,
@@ -454,6 +507,51 @@ export default function ProblemSolver() {
       setIsSubmitting(false);
     }
   };
+
+  // ── Keyboard shortcuts ──────────────────────────────────────────────────
+  const { setModalOpen } = useKeyboardStore();
+
+  const handleSaveCode = useCallback(() => {
+    const key = `code_${contestId}_${problemId}_${selectedLanguage.id}`;
+    localStorage.setItem(key, code);
+    toast({ title: "Code saved", description: "Saved locally to this browser" });
+  }, [contestId, problemId, selectedLanguage.id, code, toast]);
+
+  // Keep refs fresh so Monaco commands always call the latest version
+  handleRunRef.current    = handleRun;
+  handleSubmitRef.current = handleSubmit;
+  handleSaveRef.current   = handleSaveCode;
+
+  // Window-level shortcuts (fires when focus is outside Monaco)
+  useKeyboardShortcuts(
+    [
+      {
+        key: "ctrl+r",
+        description: "Run code",
+        action: handleRun,
+        enabled: isFullscreen && !isExpired && !isRunning && !isSubmitting,
+      },
+      {
+        key: "ctrl+enter",
+        description: "Submit solution",
+        action: handleSubmit,
+        enabled: isFullscreen && !isExpired && !isRunning && !isSubmitting,
+      },
+      {
+        key: "ctrl+s",
+        description: "Save code",
+        action: handleSaveCode,
+        enabled: true,
+      },
+      {
+        key: "?",
+        description: "Show shortcuts",
+        action: () => setModalOpen(true),
+        enabled: true,
+      },
+    ],
+    { context: "outside-monaco", preventDefault: true }
+  );
 
   // Disqualified screen
   if (showDisqualified) {
@@ -576,8 +674,247 @@ export default function ProblemSolver() {
     );
   }
 
+  // ── Shared panel content (used in both desktop + mobile layouts) ──────────
+
+  const ProblemPanelContent = (
+    <div className="h-full flex flex-col overflow-hidden">
+      <div className="p-4 border-b border-border bg-background-secondary/30">
+        <h2 className="font-semibold text-foreground">{problem.title}</h2>
+      </div>
+      <div className="flex-1 overflow-y-auto p-4">
+        <div className="prose prose-invert prose-sm max-w-none">
+          <h3 className="text-sm font-semibold text-foreground mb-3">Description</h3>
+          <div className="text-sm text-foreground-secondary whitespace-pre-wrap mb-6">
+            {problem.description || "No description provided."}
+          </div>
+
+          {sampleTestCases.length > 0 && (
+            <>
+              <h3 className="text-sm font-semibold text-foreground mb-3">
+                Sample Test Cases
+              </h3>
+              {sampleTestCases.map((tc, index) => (
+                <div key={tc.id} className="mb-4 rounded-lg border border-border overflow-hidden">
+                  <div className="bg-background-secondary px-3 py-2 border-b border-border">
+                    <span className="text-xs font-medium text-muted-foreground">
+                      Example {index + 1}
+                    </span>
+                  </div>
+                  <div className="p-3 space-y-3">
+                    <div>
+                      <span className="text-xs font-medium text-muted-foreground">Input:</span>
+                      <pre className="mt-1 p-2 rounded bg-[hsl(var(--editor-bg))] text-sm font-mono text-foreground overflow-x-auto">
+                        {tc.input}
+                      </pre>
+                    </div>
+                    <div>
+                      <span className="text-xs font-medium text-muted-foreground">Output:</span>
+                      <pre className="mt-1 p-2 rounded bg-[hsl(var(--editor-bg))] text-sm font-mono text-foreground overflow-x-auto">
+                        {tc.expected_output}
+                      </pre>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  const EditorPanelContent = (
+    <div className="h-full flex flex-col overflow-hidden">
+      {/* Editor Toolbar */}
+      <div className="px-4 py-2 border-b border-border bg-background-secondary/30 flex items-center justify-between flex-shrink-0">
+        <div className="flex items-center gap-3">
+          <select
+            value={selectedLanguage.id}
+            onChange={(e) => handleLanguageChange(e.target.value)}
+            className="px-3 py-1.5 rounded-md border border-border bg-input text-sm text-foreground focus:outline-none focus:border-primary"
+            aria-label="Select programming language"
+          >
+            {LANGUAGES.map((lang) => (
+              <option key={lang.id} value={lang.id}>
+                {lang.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Button
+            variant="arena-secondary"
+            size="sm"
+            onClick={handleRun}
+            disabled={isRunning || isSubmitting || !isFullscreen || isExpired}
+            title="Run code (Ctrl+R)"
+            aria-label="Run code against sample test cases"
+          >
+            {isRunning ? (
+              <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+            ) : (
+              <Play size={14} aria-hidden="true" />
+            )}
+            Run
+            <span className="hidden lg:inline-flex ml-1 font-mono text-[9px] opacity-50 border border-current/30 rounded px-1" aria-hidden="true">⌃R</span>
+          </Button>
+          <Button
+            variant="arena"
+            size="sm"
+            onClick={handleSubmit}
+            disabled={isRunning || isSubmitting || !isFullscreen || isExpired}
+            title="Submit solution (Ctrl+Enter)"
+            aria-label="Submit solution for evaluation"
+            aria-busy={isSubmitting}
+          >
+            {isSubmitting ? (
+              <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+            ) : (
+              <Send size={14} aria-hidden="true" />
+            )}
+            Submit
+            <span className="hidden lg:inline-flex ml-1 font-mono text-[9px] opacity-50 border border-current/30 rounded px-1" aria-hidden="true">⌃↵</span>
+          </Button>
+        </div>
+      </div>
+
+      {/* Monaco Editor */}
+      <div className="flex-1 overflow-hidden">
+        <Editor
+          height="100%"
+          language={selectedLanguage.monaco}
+          value={code}
+          onChange={(value) => setCode(value || "")}
+          onMount={handleEditorMount}
+          theme="arena-dark"
+          options={{
+            fontSize: 14,
+            fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+            fontLigatures: true,
+            minimap: { enabled: false },
+            scrollBeyondLastLine: false,
+            lineNumbers: "on",
+            glyphMargin: false,
+            lineDecorationsWidth: 10,
+            lineNumbersMinChars: 3,
+            padding: { top: 16, bottom: 16 },
+            folding: true,
+            foldingHighlight: true,
+            foldingStrategy: "indentation",
+            showFoldingControls: "mouseover",
+            renderLineHighlight: "line",
+            renderLineHighlightOnlyWhenFocus: false,
+            matchBrackets: "always",
+            bracketPairColorization: { enabled: true },
+            autoClosingBrackets: "always",
+            autoClosingQuotes: "always",
+            autoClosingDelete: "always",
+            autoSurround: "languageDefined",
+            autoIndent: "full",
+            formatOnPaste: false,
+            formatOnType: false,
+            tabSize: 4,
+            insertSpaces: true,
+            detectIndentation: true,
+            wordWrap: "on",
+            wrappingIndent: "same",
+            quickSuggestions: false,
+            suggestOnTriggerCharacters: false,
+            parameterHints: { enabled: false },
+            wordBasedSuggestions: "off",
+            snippetSuggestions: "none",
+            suggest: { enabled: false },
+            inlineSuggest: { enabled: false },
+            contextmenu: false,
+            readOnly: !isFullscreen || isExpired,
+            dropIntoEditor: { enabled: false },
+            cursorBlinking: "smooth",
+            cursorSmoothCaretAnimation: "on",
+            cursorWidth: 2,
+            smoothScrolling: true,
+            colorDecorators: true,
+            scrollbar: {
+              vertical: "visible",
+              horizontal: "visible",
+              verticalScrollbarSize: 10,
+              horizontalScrollbarSize: 10,
+            },
+          }}
+        />
+      </div>
+    </div>
+  );
+
+  const ConsolePanelContent = (
+    <Tabs defaultValue="console" className="h-full flex flex-col border-t border-border">
+      <TabsList className="flex-shrink-0 h-8 rounded-none border-b border-border bg-[hsl(var(--console-bg))] justify-start px-3 gap-1">
+        <TabsTrigger
+          value="console"
+          className="h-6 px-3 text-xs data-[state=active]:bg-background-secondary/60"
+        >
+          <Terminal size={11} className="mr-1.5" aria-hidden="true" />
+          Console
+          {(isRunning || isSubmitting) && (
+            <Loader2 size={10} className="ml-1.5 animate-spin text-primary" aria-hidden="true" />
+          )}
+        </TabsTrigger>
+        <TabsTrigger
+          value="custom"
+          className="h-6 px-3 text-xs data-[state=active]:bg-background-secondary/60"
+        >
+          Custom Tests
+        </TabsTrigger>
+      </TabsList>
+
+      {/* Console tab */}
+      <TabsContent
+        value="console"
+        className="flex-1 overflow-y-auto m-0 px-4 py-3 bg-[hsl(var(--console-bg))] space-y-3"
+      >
+        {/* Submission result with aria-live */}
+        <div aria-live="polite" aria-atomic="true">
+          <SubmissionFeedback state={submissionState} />
+        </div>
+
+        {/* Run output */}
+        {consoleOutput ? (
+          <RunOutput output={consoleOutput} />
+        ) : submissionState.status === "idle" ? (
+          <p className="text-sm text-muted-foreground font-mono">
+            Run your code to see output here...
+          </p>
+        ) : null}
+      </TabsContent>
+
+      {/* Custom Tests tab */}
+      <TabsContent value="custom" className="flex-1 overflow-hidden m-0">
+        {session && problem && (
+          <CustomTestPanel
+            sessionId={session.sessionId}
+            problemId={problem.id}
+            code={code}
+            language={selectedLanguage.id}
+            disabled={!isFullscreen || isExpired}
+          />
+        )}
+      </TabsContent>
+    </Tabs>
+  );
+
   return (
     <div className="h-screen bg-background flex flex-col overflow-hidden select-none">
+      {/* Skip-to-content */}
+      <a
+        href="#problem-main"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[100] focus:px-3 focus:py-1.5 focus:bg-primary focus:text-primary-foreground focus:rounded-md focus:text-sm"
+      >
+        Skip to main content
+      </a>
+
+      {/* Violation warning banner — auto-dismisses after 4 s */}
+      <ViolationWarning lastViolationReason={lastWarning} />
+
       {/* Header */}
       <header className="border-b border-border bg-background-secondary/50 flex-shrink-0">
         <div className="px-4 py-2 flex items-center justify-between">
@@ -604,13 +941,13 @@ export default function ProblemSolver() {
           <div className="flex items-center gap-4">
             {/* Timer */}
             <div className={`flex items-center gap-2 px-3 py-1.5 rounded-md border transition-all ${
-              timerCritical 
-                ? "bg-destructive/10 border-destructive/30 animate-pulse" 
-                : timerWarning 
-                  ? "bg-warning/10 border-warning/30" 
+              timerCritical
+                ? "bg-destructive/10 border-destructive/30 animate-pulse"
+                : timerWarning
+                  ? "bg-warning/10 border-warning/30"
                   : "bg-secondary border-border"
             }`}>
-              <Clock size={16} className={timerColorClass} />
+              <Clock size={16} className={timerColorClass} aria-hidden="true" />
               <span className={`font-mono text-sm font-bold ${timerColorClass}`}>
                 {formattedTime}
               </span>
@@ -619,20 +956,29 @@ export default function ProblemSolver() {
               )}
             </div>
 
+            {/* Accessible timer announcement (screen reader only) */}
+            <span aria-live="assertive" aria-atomic="true" className="sr-only">
+              {timerCritical
+                ? `Critical: ${formattedTime} remaining`
+                : timerWarning
+                ? `Warning: ${formattedTime} remaining`
+                : ""}
+            </span>
+
             {/* Warning Counter */}
             <div className={`flex items-center gap-2 px-3 py-1.5 rounded-md border ${
-              warnings >= 10 
-                ? "bg-destructive/10 border-destructive/20" 
-                : warnings >= 5 
+              warnings >= 10
+                ? "bg-destructive/10 border-destructive/20"
+                : warnings >= 5
                   ? "bg-warning/10 border-warning/20"
                   : "bg-secondary border-border"
             }`}>
               <AlertTriangle size={14} className={
                 warnings >= 10 ? "text-destructive" : warnings >= 5 ? "text-warning" : "text-muted-foreground"
-              } />
+              } aria-hidden="true" />
               <span className={`text-sm font-medium ${
                 warnings >= 10 ? "text-destructive" : warnings >= 5 ? "text-warning" : "text-foreground"
-              }`}>
+              }`} aria-label={`${warnings} of ${warningLimit} warnings`}>
                 {warnings} / {warningLimit}
               </span>
             </div>
@@ -644,12 +990,26 @@ export default function ProblemSolver() {
                 Re-enter Fullscreen
               </Button>
             )}
+
+            {/* Keyboard shortcuts button */}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setModalOpen(true)}
+              className="gap-1.5 text-muted-foreground hover:text-foreground group"
+              title="Keyboard shortcuts (?)"
+              aria-label="Open keyboard shortcuts"
+            >
+              <Keyboard size={14} className="group-hover:text-primary transition-colors" aria-hidden="true" />
+              <span className="hidden lg:inline text-xs">Shortcuts</span>
+              <span className="hidden lg:inline text-xs font-mono border border-border rounded px-1 py-px text-[10px] opacity-60" aria-hidden="true">?</span>
+            </Button>
           </div>
         </div>
       </header>
 
-      {/* Main Content - Resizable Panels */}
-      <div className="flex-1 flex overflow-hidden">
+      {/* Main Content */}
+      <main id="problem-main" className="flex-1 flex overflow-hidden">
         {/* Fullscreen Lock Overlay */}
         {!isFullscreen && !showFullscreenPrompt && session && (
           <FullscreenLockOverlay
@@ -660,216 +1020,69 @@ export default function ProblemSolver() {
           />
         )}
 
-        <ResizablePanelGroup direction="horizontal" className="flex-1">
-          {/* Left Panel - Problem Description (resizable) */}
-          <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
-            <div className="h-full flex flex-col overflow-hidden">
-              <div className="p-4 border-b border-border bg-background-secondary/30">
-                <h2 className="font-semibold text-foreground">{problem.title}</h2>
-              </div>
-              <div className="flex-1 overflow-y-auto p-4">
-                <div className="prose prose-invert prose-sm max-w-none">
-                  <h3 className="text-sm font-semibold text-foreground mb-3">Description</h3>
-                  <div className="text-sm text-foreground-secondary whitespace-pre-wrap mb-6">
-                    {problem.description || "No description provided."}
-                  </div>
+        {/* ── DESKTOP LAYOUT (≥ 768px) ── */}
+        {!isMobile && (
+          <ResizablePanelGroup direction="horizontal" className="flex-1">
+            {/* Left Panel - Problem Description */}
+            <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
+              {ProblemPanelContent}
+            </ResizablePanel>
 
-                  {sampleTestCases.length > 0 && (
-                    <>
-                      <h3 className="text-sm font-semibold text-foreground mb-3">
-                        Sample Test Cases
-                      </h3>
-                      {sampleTestCases.map((tc, index) => (
-                        <div
-                          key={tc.id}
-                          className="mb-4 rounded-lg border border-border overflow-hidden"
-                        >
-                          <div className="bg-background-secondary px-3 py-2 border-b border-border">
-                            <span className="text-xs font-medium text-muted-foreground">
-                              Example {index + 1}
-                            </span>
-                          </div>
-                          <div className="p-3 space-y-3">
-                            <div>
-                              <span className="text-xs font-medium text-muted-foreground">
-                                Input:
-                              </span>
-                              <pre className="mt-1 p-2 rounded bg-[hsl(var(--editor-bg))] text-sm font-mono text-foreground overflow-x-auto">
-                                {tc.input}
-                              </pre>
-                            </div>
-                            <div>
-                              <span className="text-xs font-medium text-muted-foreground">
-                                Output:
-                              </span>
-                              <pre className="mt-1 p-2 rounded bg-[hsl(var(--editor-bg))] text-sm font-mono text-foreground overflow-x-auto">
-                                {tc.expected_output}
-                              </pre>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </>
-                  )}
-                </div>
+            <ResizableHandle withHandle />
+
+            {/* Right Panel - Editor + Console */}
+            <ResizablePanel defaultSize={70} minSize={40}>
+              <ResizablePanelGroup direction="vertical">
+                <ResizablePanel defaultSize={70} minSize={30}>
+                  {EditorPanelContent}
+                </ResizablePanel>
+
+                <ResizableHandle withHandle />
+
+                <ResizablePanel defaultSize={35} minSize={15} maxSize={65}>
+                  {ConsolePanelContent}
+                </ResizablePanel>
+              </ResizablePanelGroup>
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        )}
+
+        {/* ── MOBILE LAYOUT (< 768px) ── */}
+        {isMobile && (
+          <div className="flex-1 flex flex-col overflow-hidden">
+            {/* Mobile tab content — editor always mounted to preserve code */}
+            <div className="flex-1 overflow-hidden relative">
+              <div className={activeMobileTab === "problem" ? "h-full flex flex-col overflow-hidden" : "sr-only overflow-hidden h-0 pointer-events-none"}>
+                {ProblemPanelContent}
+              </div>
+              <div className={activeMobileTab === "code" ? "h-full flex flex-col overflow-hidden" : "sr-only overflow-hidden h-0 pointer-events-none"}>
+                {EditorPanelContent}
+              </div>
+              <div className={activeMobileTab === "console" ? "h-full flex flex-col overflow-hidden" : "sr-only overflow-hidden h-0 pointer-events-none"}>
+                {ConsolePanelContent}
               </div>
             </div>
-          </ResizablePanel>
 
-          <ResizableHandle withHandle />
-
-          {/* Right Panel - Code Editor + Console (resizable vertically) */}
-          <ResizablePanel defaultSize={70} minSize={40}>
-            <ResizablePanelGroup direction="vertical">
-              {/* Code Editor Panel */}
-              <ResizablePanel defaultSize={70} minSize={30}>
-                <div className="h-full flex flex-col overflow-hidden">
-                  {/* Editor Toolbar */}
-                  <div className="px-4 py-2 border-b border-border bg-background-secondary/30 flex items-center justify-between flex-shrink-0">
-                    <div className="flex items-center gap-3">
-                      <select
-                        value={selectedLanguage.id}
-                        onChange={(e) => handleLanguageChange(e.target.value)}
-                        className="px-3 py-1.5 rounded-md border border-border bg-input text-sm text-foreground focus:outline-none focus:border-primary"
-                      >
-                        {LANGUAGES.map((lang) => (
-                          <option key={lang.id} value={lang.id}>
-                            {lang.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="arena-secondary"
-                        size="sm"
-                        onClick={handleRun}
-                        disabled={isRunning || isSubmitting || !isFullscreen || isExpired}
-                      >
-                        {isRunning ? (
-                          <Loader2 size={14} className="animate-spin" />
-                        ) : (
-                          <Play size={14} />
-                        )}
-                        Run
-                      </Button>
-                      <Button
-                        variant="arena"
-                        size="sm"
-                        onClick={handleSubmit}
-                        disabled={isRunning || isSubmitting || !isFullscreen || isExpired}
-                      >
-                        {isSubmitting ? (
-                          <Loader2 size={14} className="animate-spin" />
-                        ) : (
-                          <Send size={14} />
-                        )}
-                        Submit
-                      </Button>
-                    </div>
-                  </div>
-
-                  {/* Monaco Editor */}
-                  <div className="flex-1 overflow-hidden">
-                    <Editor
-                      height="100%"
-                      language={selectedLanguage.monaco}
-                      value={code}
-                      onChange={(value) => setCode(value || "")}
-                      onMount={handleEditorMount}
-                      theme="vs-dark"
-                      options={{
-                        fontSize: 14,
-                        fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                        fontLigatures: true,
-                        minimap: { enabled: false },
-                        scrollBeyondLastLine: false,
-                        lineNumbers: "on",
-                        glyphMargin: false,
-                        lineDecorationsWidth: 10,
-                        lineNumbersMinChars: 3,
-                        padding: { top: 16, bottom: 16 },
-                        folding: true,
-                        foldingHighlight: true,
-                        foldingStrategy: "indentation",
-                        showFoldingControls: "mouseover",
-                        renderLineHighlight: "line",
-                        renderLineHighlightOnlyWhenFocus: false,
-                        matchBrackets: "always",
-                        bracketPairColorization: { enabled: true },
-                        autoClosingBrackets: "always",
-                        autoClosingQuotes: "always",
-                        autoClosingDelete: "always",
-                        autoSurround: "languageDefined",
-                        autoIndent: "full",
-                        formatOnPaste: false,
-                        formatOnType: false,
-                        tabSize: 4,
-                        insertSpaces: true,
-                        detectIndentation: true,
-                        wordWrap: "on",
-                        wrappingIndent: "same",
-                        quickSuggestions: false,
-                        suggestOnTriggerCharacters: false,
-                        parameterHints: { enabled: false },
-                        wordBasedSuggestions: "off",
-                        snippetSuggestions: "none",
-                        suggest: { enabled: false },
-                        inlineSuggest: { enabled: false },
-                        contextmenu: false,
-                        readOnly: !isFullscreen || isExpired,
-                        dropIntoEditor: { enabled: false },
-                        cursorBlinking: "smooth",
-                        cursorSmoothCaretAnimation: "on",
-                        cursorWidth: 2,
-                        smoothScrolling: true,
-                        renderValidationDecorations: "on",
-                        scrollbar: {
-                          vertical: "visible",
-                          horizontal: "visible",
-                          verticalScrollbarSize: 10,
-                          horizontalScrollbarSize: 10,
-                        },
-                      }}
-                    />
-                  </div>
-                </div>
-              </ResizablePanel>
-
-              <ResizableHandle withHandle />
-
-              {/* Console Output Panel (resizable) */}
-              <ResizablePanel defaultSize={30} minSize={10} maxSize={60}>
-                <div className="h-full flex flex-col bg-[hsl(var(--console-bg))] border-t border-border">
-                  <div
-                    className="px-4 py-2 flex items-center justify-between cursor-pointer hover:bg-background-secondary/50 flex-shrink-0"
-                    onClick={() => setConsoleExpanded(!consoleExpanded)}
-                  >
-                    <div className="flex items-center gap-3">
-                      <Terminal size={14} className="text-muted-foreground" />
-                      <span className="text-sm font-medium text-foreground">Console</span>
-                      {(isRunning || isSubmitting) && (
-                        <Loader2 size={12} className="animate-spin text-primary" />
-                      )}
-                    </div>
-                    <button className="text-muted-foreground hover:text-foreground">
-                      {consoleExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-                    </button>
-                  </div>
-                  {consoleExpanded && (
-                    <div className="px-4 pb-4 flex-1 overflow-y-auto">
-                      <pre className="text-sm font-mono text-foreground-secondary whitespace-pre-wrap">
-                        {consoleOutput || "Run your code to see output here..."}
-                      </pre>
-                    </div>
-                  )}
-                </div>
-              </ResizablePanel>
-            </ResizablePanelGroup>
-          </ResizablePanel>
-        </ResizablePanelGroup>
-      </div>
+            {/* Mobile bottom tab bar */}
+            <div className="flex-shrink-0 border-t border-border bg-background-secondary/50 flex">
+              {(["problem", "code", "console"] as const).map((tab) => (
+                <button
+                  key={tab}
+                  className={`flex-1 py-2.5 text-xs font-medium capitalize transition-colors ${
+                    activeMobileTab === tab
+                      ? "text-primary border-t-2 border-primary bg-primary/5"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                  onClick={() => setActiveMobileTab(tab)}
+                  aria-current={activeMobileTab === tab ? "page" : undefined}
+                >
+                  {tab}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </main>
     </div>
   );
 }

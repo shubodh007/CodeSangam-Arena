@@ -7,18 +7,42 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Dependencies
 node_modules
+
+# Build output
 dist
 dist-ssr
+build
 *.local
+
+# Environment variables (contains secrets — never commit)
+.env
+.env.*
+!.env.example
+
+# Supabase
+supabase/.temp/
+
+# Lovable AI platform metadata
+.lovable/
+
+# Misc scripts not part of the project
+find_region.cjs
 
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
 .idea
 .DS_Store
+Thumbs.db
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+
+# OS
+.DS_Store
+*.DS_Store
+desktop.ini

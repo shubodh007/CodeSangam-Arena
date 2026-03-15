@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,8 @@ import { LeaderboardRow } from "@/components/leaderboard/LeaderboardRow";
 import { LeaderboardStats } from "@/components/leaderboard/LeaderboardStats";
 import { LeaderboardSkeleton } from "@/components/leaderboard/LeaderboardSkeleton";
 import { ConnectionBanner } from "@/components/leaderboard/ConnectionBanner";
-import { useLeaderboard } from "@/hooks/useLeaderboard";
+import { useRealtimeLeaderboard } from "@/hooks/useRealtimeLeaderboard";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { supabase } from "@/integrations/supabase/client";
 import {
   ChevronLeft,
@@ -60,10 +61,9 @@ export default function ContestLeaderboardPage() {
     maxScore,
     manualRefresh,
     getTimeSinceUpdate,
-  } = useLeaderboard({
+  } = useRealtimeLeaderboard({
     contestId: contestId || "",
     currentUsername,
-    pollIntervalMs: 7000,
     enabled: !!contestId,
   });
 
@@ -93,12 +93,29 @@ export default function ContestLeaderboardPage() {
     [touchStart, manualRefresh]
   );
 
+  // Virtualization for large leaderboards
+  const parentRef = useRef<HTMLDivElement>(null);
+  const shouldVirtualize = leaderboard.length > 50;
+  const rowVirtualizer = useVirtualizer({
+    count: shouldVirtualize ? leaderboard.length : 0,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 68,
+    overscan: 5,
+  });
+
   return (
     <div
       className="min-h-screen bg-background"
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
+      {/* Skip to content */}
+      <a
+        href="#leaderboard-main"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-[100] focus:px-4 focus:py-2 focus:bg-primary focus:text-primary-foreground focus:rounded-md"
+      >
+        Skip to main content
+      </a>
       {/* Header */}
       <header className="border-b border-border bg-background-secondary/50 sticky top-0 z-50">
         <div className="container mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
@@ -133,7 +150,7 @@ export default function ContestLeaderboardPage() {
         </div>
       </header>
 
-      <main className="container mx-auto px-4 sm:px-6 py-6 max-w-3xl">
+      <main id="leaderboard-main" className="container mx-auto px-4 sm:px-6 py-6 max-w-3xl">
         {/* Title */}
         <div className="flex items-center gap-3 mb-6">
           <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
@@ -195,19 +212,53 @@ export default function ContestLeaderboardPage() {
                 <p className="text-sm text-muted-foreground">No participants yet</p>
               </div>
             ) : (
-              <div className="space-y-1.5">
-                {leaderboard.map((entry) => (
-                  <LeaderboardRow
-                    key={entry.session_id}
-                    entry={entry}
-                    change={rankChanges.get(entry.session_id)}
-                    isCurrentUser={entry.username === currentUsername}
-                    isRecentlyUpdated={recentlyUpdated.has(entry.session_id)}
-                    isNewTopTen={newTopTen.has(entry.session_id)}
-                    maxScore={maxScore}
-                  />
-                ))}
-              </div>
+              shouldVirtualize ? (
+                <div
+                  ref={parentRef}
+                  className="overflow-auto"
+                  style={{ height: "calc(100vh - 240px)" }}
+                >
+                  {(() => {
+                    const virtualItems = rowVirtualizer.getVirtualItems();
+                    const paddingTop = virtualItems.length > 0 ? virtualItems[0].start : 0;
+                    const paddingBottom = virtualItems.length > 0
+                      ? rowVirtualizer.getTotalSize() - virtualItems[virtualItems.length - 1].end
+                      : 0;
+                    return (
+                      <div className="space-y-1.5" style={{ paddingTop, paddingBottom }}>
+                        {virtualItems.map((virtualRow) => {
+                          const entry = leaderboard[virtualRow.index];
+                          return (
+                            <LeaderboardRow
+                              key={entry.session_id}
+                              entry={entry}
+                              change={rankChanges.get(entry.session_id)}
+                              isCurrentUser={entry.username === currentUsername}
+                              isRecentlyUpdated={recentlyUpdated.has(entry.session_id)}
+                              isNewTopTen={newTopTen.has(entry.session_id)}
+                              maxScore={maxScore}
+                            />
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  {leaderboard.map((entry) => (
+                    <LeaderboardRow
+                      key={entry.session_id}
+                      entry={entry}
+                      change={rankChanges.get(entry.session_id)}
+                      isCurrentUser={entry.username === currentUsername}
+                      isRecentlyUpdated={recentlyUpdated.has(entry.session_id)}
+                      isNewTopTen={newTopTen.has(entry.session_id)}
+                      maxScore={maxScore}
+                    />
+                  ))}
+                </div>
+              )
             )}
           </ArenaCardContent>
         </ArenaCard>

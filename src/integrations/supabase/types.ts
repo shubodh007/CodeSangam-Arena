@@ -426,6 +426,28 @@ export type Database = {
       }
     }
     Views: {
+      admin_submissions_view: {
+        Row: {
+          attempt_number: number | null
+          code: string | null
+          code_length: number | null
+          contest_id: string | null
+          contest_title: string | null
+          is_disqualified: boolean | null
+          language: string | null
+          problem_id: string | null
+          problem_max_score: number | null
+          problem_title: string | null
+          score: number | null
+          session_id: string | null
+          status: string | null
+          submission_id: string | null
+          submitted_at: string | null
+          username: string | null
+          warnings: number | null
+        }
+        Relationships: []
+      }
       admin_leaderboard_view: {
         Row: {
           contest_id: string | null
@@ -475,6 +497,20 @@ export type Database = {
       }
     }
     Functions: {
+      get_submission_stats: {
+        Args: { p_contest_id: string }
+        Returns: {
+          problem_id: string
+          problem_title: string
+          total_submissions: number
+          unique_students: number
+          accepted_submissions: number
+          partial_submissions: number
+          failed_submissions: number
+          average_score: number
+          average_attempts: number
+        }[]
+      }
       is_admin: { Args: { _user_id: string }; Returns: boolean }
       upsert_student_session: {
         Args: { p_contest_id: string; p_user_id: string; p_username: string }

@@ -10,6 +10,9 @@ import { supabase } from "@/integrations/supabase/client";
 import { AddWarningDialog } from "@/components/admin/AddWarningDialog";
 import { ResetWarningsDialog } from "@/components/admin/ResetWarningsDialog";
 import { useToast } from "@/hooks/use-toast";
+import { useRealtimeLeaderboard } from "@/hooks/useRealtimeLeaderboard";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import type { AdminLeaderboardEntry, RankChange } from "@/store/leaderboardStore";
 import {
   Table,
   TableBody,
@@ -31,27 +34,11 @@ import {
   Minus,
   Download,
   Filter,
+  FileCode2,
+  FileText,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
-
-interface LeaderboardEntry {
-  session_id: string;
-  contest_id: string;
-  username: string;
-  is_disqualified: boolean;
-  warnings: number;
-  execution_count: number;
-  total_score: number;
-  problems_solved: number;
-  wrong_attempts: number;
-  total_time_seconds: number;
-  last_accepted_at: string | null;
-  rank: number;
-}
-
-interface RankChange {
-  direction: "up" | "down" | "same" | "new";
-  delta: number;
-}
 
 interface Contest {
   id: string;
@@ -59,174 +46,101 @@ interface Contest {
   is_active: boolean;
 }
 
-const REFRESH_INTERVAL = 5;
 const DEBOUNCE_MS = 2000;
 
 export default function ContestLeaderboard() {
   const { contestId } = useParams();
   const navigate = useNavigate();
   const { toast } = useToast();
+
   const [contest, setContest] = useState<Contest | null>(null);
-  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [countdown, setCountdown] = useState(REFRESH_INTERVAL);
-  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [pageLoading, setPageLoading] = useState(true);
+  const [isAuthChecked, setIsAuthChecked] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "disqualified">("all");
-  const [rankChanges, setRankChanges] = useState<Map<string, RankChange>>(new Map());
-  const [recentlyUpdated, setRecentlyUpdated] = useState<Set<string>>(new Set());
 
-  const previousDataRef = useRef<Map<string, LeaderboardEntry>>(new Map());
   const lastManualRefreshRef = useRef(0);
-  const countdownRef = useRef<ReturnType<typeof setInterval>>();
-  const autoRefreshRef = useRef<ReturnType<typeof setInterval>>();
 
-  // Auth check + initial fetch
+  // ── Auth + contest fetch ─────────────────────────────────────────────────
   useEffect(() => {
+    let cancelled = false;
+
+    async function checkAuthAndFetch() {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (cancelled) return;
+      if (!user) {
+        navigate("/admin/login");
+        return;
+      }
+
+      const { data: roleData } = await supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", user.id)
+        .eq("role", "admin")
+        .maybeSingle();
+
+      if (cancelled) return;
+      if (!roleData) {
+        await supabase.auth.signOut();
+        navigate("/admin/login");
+        return;
+      }
+
+      const { data: contestData, error: contestError } = await supabase
+        .from("contests")
+        .select("id, title, is_active")
+        .eq("id", contestId)
+        .single();
+
+      if (cancelled) return;
+      if (contestError) console.error("Error fetching contest:", contestError);
+      else setContest(contestData);
+
+      setPageLoading(false);
+      setIsAuthChecked(true);
+    }
+
     checkAuthAndFetch();
     return () => {
-      supabase.removeAllChannels();
-      if (countdownRef.current) clearInterval(countdownRef.current);
-      if (autoRefreshRef.current) clearInterval(autoRefreshRef.current);
+      cancelled = true;
     };
-  }, [contestId]);
+  }, [contestId, navigate]);
 
-  // Auto-refresh timer
-  useEffect(() => {
-    if (!autoRefresh || loading) return;
+  // ── Realtime leaderboard hook ────────────────────────────────────────────
+  const {
+    adminLeaderboard: leaderboard,
+    loading: leaderboardLoading,
+    isRefreshing,
+    connectionStatus,
+    lastUpdated,
+    rankChanges,
+    recentlyUpdated,
+    manualRefresh: hookManualRefresh,
+  } = useRealtimeLeaderboard({
+    contestId: contestId ?? "",
+    isAdmin: true,
+    enabled: isAuthChecked && !!contestId,
+    // Keep a 30 s safety-net poll for admin (tighter than the default 60 s)
+    fallbackPollMs: 30_000,
+  });
 
-    setCountdown(REFRESH_INTERVAL);
-
-    countdownRef.current = setInterval(() => {
-      setCountdown((prev) => {
-        if (prev <= 1) {
-          fetchLeaderboard(true);
-          return REFRESH_INTERVAL;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => {
-      if (countdownRef.current) clearInterval(countdownRef.current);
-    };
-  }, [autoRefresh, loading]);
-
-  // Realtime subscription
-  useEffect(() => {
-    if (!contestId) return;
-
-    const channel = supabase
-      .channel("leaderboard-updates")
-      .on("postgres_changes", { event: "*", schema: "public", table: "student_problem_status" }, () => fetchLeaderboard(true))
-      .on("postgres_changes", { event: "*", schema: "public", table: "submissions" }, () => fetchLeaderboard(true))
-      .on("postgres_changes", { event: "*", schema: "public", table: "student_sessions" }, () => fetchLeaderboard(true))
-      .subscribe();
-
-    return () => { supabase.removeChannel(channel); };
-  }, [contestId]);
-
-  const checkAuthAndFetch = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) { navigate("/admin/login"); return; }
-
-    const { data: roleData } = await supabase
-      .from("user_roles").select("role")
-      .eq("user_id", user.id).eq("role", "admin").maybeSingle();
-
-    if (!roleData) { await supabase.auth.signOut(); navigate("/admin/login"); return; }
-    fetchContestAndLeaderboard();
-  };
-
-  const fetchContestAndLeaderboard = async () => {
-    try {
-      const { data: contestData, error: contestError } = await supabase
-        .from("contests").select("id, title, is_active").eq("id", contestId).single();
-      if (contestError) throw contestError;
-      setContest(contestData);
-      await fetchLeaderboard(false);
-    } catch (err) {
-      console.error("Error fetching contest:", err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchLeaderboard = useCallback(async (silent = true) => {
-    if (!silent) setIsRefreshing(true);
-
-    try {
-      const { data, error } = await supabase
-        .from("admin_leaderboard_view").select("*")
-        .eq("contest_id", contestId).order("rank", { ascending: true });
-
-      if (error) throw error;
-      const entries: LeaderboardEntry[] = (data || []).map((d) => ({
-        session_id: d.session_id || "",
-        contest_id: d.contest_id || "",
-        username: d.username || "",
-        is_disqualified: d.is_disqualified || false,
-        warnings: d.warnings || 0,
-        execution_count: d.execution_count || 0,
-        total_score: d.total_score || 0,
-        problems_solved: d.problems_solved || 0,
-        wrong_attempts: d.wrong_attempts || 0,
-        total_time_seconds: d.total_time_seconds || 0,
-        last_accepted_at: d.last_accepted_at,
-        rank: d.rank || 0,
-      }));
-
-      // Compute rank changes
-      const prevMap = previousDataRef.current;
-      const changes = new Map<string, RankChange>();
-      const updated = new Set<string>();
-
-      entries.forEach((entry) => {
-        const prev = prevMap.get(entry.session_id);
-        if (!prev) {
-          changes.set(entry.session_id, { direction: prevMap.size > 0 ? "new" : "same", delta: 0 });
-        } else {
-          const rankDelta = prev.rank - entry.rank;
-          const direction = rankDelta > 0 ? "up" : rankDelta < 0 ? "down" : "same";
-          changes.set(entry.session_id, { direction, delta: Math.abs(rankDelta) });
-
-          if (entry.total_score !== prev.total_score || entry.rank !== prev.rank || entry.warnings !== prev.warnings) {
-            updated.add(entry.session_id);
-          }
-        }
-      });
-
-      const newPrevMap = new Map<string, LeaderboardEntry>();
-      entries.forEach((e) => newPrevMap.set(e.session_id, e));
-      previousDataRef.current = newPrevMap;
-
-      setRankChanges(changes);
-      setRecentlyUpdated(updated);
-      setLeaderboard(entries);
-      setLastUpdated(new Date());
-
-      if (updated.size > 0) {
-        setTimeout(() => setRecentlyUpdated(new Set()), 3000);
-      }
-    } catch (err) {
-      console.error("Error fetching leaderboard:", err);
-      toast({ title: "Refresh failed", description: "Failed to refresh. Retrying...", variant: "destructive" });
-    } finally {
-      setIsRefreshing(false);
-    }
-  }, [contestId, toast]);
-
-  const handleManualRefresh = useCallback(async () => {
+  // ── Manual refresh (debounced + toast) ──────────────────────────────────
+  const handleManualRefresh = useCallback(() => {
     const now = Date.now();
     if (now - lastManualRefreshRef.current < DEBOUNCE_MS) return;
     lastManualRefreshRef.current = now;
-    setIsRefreshing(true);
-    await fetchLeaderboard(false);
-    setCountdown(REFRESH_INTERVAL);
-    toast({ title: "✅ Leaderboard refreshed", description: "Rankings recalculated successfully." });
-  }, [fetchLeaderboard, toast]);
+    hookManualRefresh();
+    toast({
+      title: "✅ Leaderboard refreshed",
+      description: "Rankings recalculated successfully.",
+    });
+  }, [hookManualRefresh, toast]);
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
 
   const formatTime = (seconds: number) => {
     if (seconds === 0) return "—";
@@ -238,7 +152,12 @@ export default function ContestLeaderboard() {
 
   const formatLastUpdated = () => {
     if (!lastUpdated) return "—";
-    return lastUpdated.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    return lastUpdated.toLocaleTimeString("en-US", {
+      hour12: false,
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
   };
 
   const getRankDisplay = (rank: number, solved: number) => {
@@ -249,7 +168,7 @@ export default function ContestLeaderboard() {
     return <span className="text-muted-foreground font-mono text-sm font-bold">{rank}</span>;
   };
 
-  const getRankRowClass = (entry: LeaderboardEntry, isUpdated: boolean) => {
+  const getRankRowClass = (entry: AdminLeaderboardEntry, isUpdated: boolean) => {
     const base = isUpdated ? "leaderboard-row-glow" : "";
     if (entry.is_disqualified) return `${base} opacity-50 bg-destructive/5`;
     if (entry.problems_solved > 0) {
@@ -260,17 +179,46 @@ export default function ContestLeaderboard() {
     return base;
   };
 
-  const getStatusIndicator = (entry: LeaderboardEntry) => {
-    if (entry.is_disqualified) return <span title="Disqualified" className="flex items-center gap-1.5 text-destructive"><span className="w-2 h-2 rounded-full bg-destructive inline-block" />DQ</span>;
-    if (entry.problems_solved > 0 || entry.execution_count > 0) return <span title="Active" className="flex items-center gap-1.5 text-success"><span className="w-2 h-2 rounded-full bg-success inline-block animate-status-pulse" />Active</span>;
-    return <span title="Idle" className="flex items-center gap-1.5 text-warning"><span className="w-2 h-2 rounded-full bg-warning inline-block" />Idle</span>;
+  const getStatusIndicator = (entry: AdminLeaderboardEntry) => {
+    if (entry.is_disqualified)
+      return (
+        <span title="Disqualified" className="flex items-center gap-1.5 text-destructive">
+          <span className="w-2 h-2 rounded-full bg-destructive inline-block" />DQ
+        </span>
+      );
+    if (entry.problems_solved > 0 || entry.execution_count > 0)
+      return (
+        <span title="Active" className="flex items-center gap-1.5 text-success">
+          <span className="w-2 h-2 rounded-full bg-success inline-block animate-status-pulse" />Active
+        </span>
+      );
+    return (
+      <span title="Idle" className="flex items-center gap-1.5 text-warning">
+        <span className="w-2 h-2 rounded-full bg-warning inline-block" />Idle
+      </span>
+    );
   };
 
-  const getRankChangeIcon = (change?: RankChange) => {
-    if (!change || change.direction === "same") return <Minus size={12} className="text-muted-foreground" />;
-    if (change.direction === "up") return <span className="flex items-center gap-0.5 text-success text-xs font-bold"><TrendingUp size={12} />+{change.delta}</span>;
-    if (change.direction === "down") return <span className="flex items-center gap-0.5 text-destructive text-xs font-bold"><TrendingDown size={12} />-{change.delta}</span>;
-    if (change.direction === "new") return <span className="text-[10px] font-bold text-accent uppercase">NEW</span>;
+  const getRankChangeIcon = (change?: RankChange, currentRank?: number) => {
+    if (!change || change.direction === "same")
+      return <Minus size={12} className="text-muted-foreground" />;
+
+    const delta = currentRank != null ? Math.abs(change.previousRank - currentRank) : 0;
+
+    if (change.direction === "up")
+      return (
+        <span className="flex items-center gap-0.5 text-success text-xs font-bold">
+          <TrendingUp size={12} />+{delta}
+        </span>
+      );
+    if (change.direction === "down")
+      return (
+        <span className="flex items-center gap-0.5 text-destructive text-xs font-bold">
+          <TrendingDown size={12} />-{delta}
+        </span>
+      );
+    if (change.direction === "new")
+      return <span className="text-[10px] font-bold text-accent uppercase">NEW</span>;
     return null;
   };
 
@@ -282,11 +230,18 @@ export default function ContestLeaderboard() {
     return "text-muted-foreground";
   };
 
+  // ── CSV export ───────────────────────────────────────────────────────────
   const exportCSV = () => {
-    const headers = ["Rank", "Username", "Score", "Solved", "Wrong", "Time", "Warnings", "Status"];
+    const headers = ["Rank", "Username", "Score", "Solved", "Partial", "Wrong", "Time", "Warnings", "Status"];
     const rows = filteredLeaderboard.map((e) => [
-      e.rank, e.username, e.total_score, e.problems_solved, e.wrong_attempts,
-      formatTime(e.total_time_seconds), e.warnings,
+      e.rank,
+      e.username,
+      e.total_score,
+      e.problems_solved,
+      e.problems_partially_solved,
+      e.wrong_attempts,
+      formatTime(e.total_time_seconds),
+      e.warnings,
       e.is_disqualified ? "Disqualified" : e.problems_solved > 0 ? "Active" : "Idle",
     ]);
     const csv = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
@@ -294,14 +249,15 @@ export default function ContestLeaderboard() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `leaderboard-${contest?.title || "contest"}.csv`;
+    a.download = `leaderboard-${contest?.title ?? "contest"}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
 
-  // Filtered leaderboard
+  // ── Derived data ─────────────────────────────────────────────────────────
   const filteredLeaderboard = leaderboard.filter((entry) => {
-    const matchesSearch = !searchQuery || entry.username.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesSearch =
+      !searchQuery || entry.username.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesFilter =
       statusFilter === "all" ||
       (statusFilter === "active" && !entry.is_disqualified) ||
@@ -309,11 +265,24 @@ export default function ContestLeaderboard() {
     return matchesSearch && matchesFilter;
   });
 
-  const totalActive = leaderboard.filter((e) => !e.is_disqualified && (e.problems_solved > 0 || e.execution_count > 0)).length;
+  const totalActive = leaderboard.filter(
+    (e) => !e.is_disqualified && (e.problems_solved > 0 || e.execution_count > 0)
+  ).length;
   const totalDisqualified = leaderboard.filter((e) => e.is_disqualified).length;
   const totalWithSolved = leaderboard.filter((e) => e.problems_solved > 0).length;
 
-  if (loading) {
+  // Virtualization for large tables
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+  const shouldVirtualize = filteredLeaderboard.length > 50;
+  const rowVirtualizer = useVirtualizer({
+    count: shouldVirtualize ? filteredLeaderboard.length : 0,
+    getScrollElement: () => tableScrollRef.current,
+    estimateSize: () => 52,
+    overscan: 5,
+  });
+
+  // ── Loading skeleton ─────────────────────────────────────────────────────
+  if (pageLoading) {
     return (
       <div className="min-h-screen bg-background">
         <header className="border-b border-border header-glass sticky top-0 z-50">
@@ -325,16 +294,25 @@ export default function ContestLeaderboard() {
         <main className="container mx-auto px-6 py-8">
           <Skeleton className="h-8 w-64 mb-8" />
           <div className="grid grid-cols-4 gap-4 mb-8">
-            {[1, 2, 3, 4].map(i => (
-              <ArenaCard key={i}><ArenaCardContent><Skeleton className="h-16 w-full" /></ArenaCardContent></ArenaCard>
+            {[1, 2, 3, 4].map((i) => (
+              <ArenaCard key={i}>
+                <ArenaCardContent>
+                  <Skeleton className="h-16 w-full" />
+                </ArenaCardContent>
+              </ArenaCard>
             ))}
           </div>
-          <ArenaCard><ArenaCardContent><Skeleton className="h-64 w-full" /></ArenaCardContent></ArenaCard>
+          <ArenaCard>
+            <ArenaCardContent>
+              <Skeleton className="h-64 w-full" />
+            </ArenaCardContent>
+          </ArenaCard>
         </main>
       </div>
     );
   }
 
+  // ── Render ───────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -348,40 +326,58 @@ export default function ContestLeaderboard() {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Auto-refresh toggle + countdown */}
-            <div className="flex items-center gap-2 text-xs">
-              <button
-                onClick={() => setAutoRefresh(!autoRefresh)}
-                className={`px-2.5 py-1.5 rounded-md border text-xs font-medium transition-colors ${
-                  autoRefresh
-                    ? "bg-success/10 border-success/30 text-success"
-                    : "bg-muted border-border text-muted-foreground"
-                }`}
-              >
-                Auto: {autoRefresh ? "ON" : "OFF"}
-              </button>
-              {autoRefresh && (
-                <span className="font-mono text-muted-foreground tabular-nums min-w-[40px]">
-                  {countdown}s
-                </span>
-              )}
-            </div>
-
             {/* Last updated */}
             <span className="hidden md:inline text-xs text-muted-foreground">
               Updated: {formatLastUpdated()}
             </span>
 
-            {/* Live indicator */}
-            <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-success/10 border border-success/20">
-              <span className="w-2 h-2 rounded-full bg-success animate-status-pulse" />
-              <span className="text-[11px] font-bold text-success uppercase tracking-wide">LIVE</span>
-            </div>
+            {/* Live / reconnecting indicator */}
+            {connectionStatus === "connected" ? (
+              <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-success/10 border border-success/20">
+                <Wifi size={13} className="text-success" />
+                <span className="text-[11px] font-bold text-success uppercase tracking-wide">LIVE</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-warning/10 border border-warning/20">
+                <WifiOff size={13} className="text-warning" />
+                <span className="text-[11px] font-bold text-warning uppercase tracking-wide">
+                  {connectionStatus === "reconnecting" ? "Reconnecting" : "Offline"}
+                </span>
+              </div>
+            )}
 
             {/* Manual refresh */}
-            <Button variant="outline" size="sm" onClick={handleManualRefresh} disabled={isRefreshing} className="gap-1.5">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleManualRefresh}
+              disabled={isRefreshing}
+              className="gap-1.5"
+            >
               <RefreshCw size={13} className={isRefreshing ? "animate-spin" : ""} />
               Refresh
+            </Button>
+
+            {/* View submissions */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigate(`/admin/contest/${contestId}/submissions`)}
+              className="gap-1.5"
+            >
+              <FileCode2 size={13} />
+              Submissions
+            </Button>
+
+            {/* Generate PDF report */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigate(`/admin/contest/${contestId}/report`)}
+              className="gap-1.5"
+            >
+              <FileText size={13} />
+              Report
             </Button>
           </div>
         </div>
@@ -393,9 +389,13 @@ export default function ContestLeaderboard() {
           <div className="flex items-center gap-3 mb-1">
             <Trophy className="text-primary" size={24} />
             <h1 className="text-xl font-bold text-foreground">
-              {contest?.title || "Contest"} — Leaderboard
+              {contest?.title ?? "Contest"} — Leaderboard
             </h1>
-            <StatusBadge status={contest?.is_active ? "active" : "inactive"} size="sm" pulse={contest?.is_active} />
+            <StatusBadge
+              status={contest?.is_active ? "active" : "inactive"}
+              size="sm"
+              pulse={contest?.is_active}
+            />
           </div>
           <p className="text-sm text-muted-foreground">
             Ranked by: Score ↓ · Wrong ↑ · Time ↑ · Last Accepted ↑ · Username A-Z
@@ -410,7 +410,11 @@ export default function ContestLeaderboard() {
             { label: "Solved 1+", value: totalWithSolved, icon: Trophy, cls: "text-accent" },
             { label: "Disqualified", value: totalDisqualified, icon: AlertTriangle, cls: "text-destructive" },
           ].map((s, i) => (
-            <ArenaCard key={s.label} className="animate-slide-up" style={{ animationDelay: `${i * 60}ms` } as React.CSSProperties}>
+            <ArenaCard
+              key={s.label}
+              className="animate-slide-up"
+              style={{ animationDelay: `${i * 60}ms` } as React.CSSProperties}
+            >
               <ArenaCardContent className="flex items-center gap-3 py-3">
                 <s.icon size={20} className={s.cls} />
                 <div>
@@ -425,7 +429,10 @@ export default function ContestLeaderboard() {
         {/* Search + Filter + Export */}
         <div className="flex flex-wrap items-center gap-3 mb-4">
           <div className="relative flex-1 min-w-[200px] max-w-sm">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <Search
+              size={14}
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+            />
             <Input
               placeholder="Search username..."
               value={searchQuery}
@@ -456,31 +463,36 @@ export default function ContestLeaderboard() {
           </Button>
         </div>
 
-        {/* Refresh progress bar */}
-        {autoRefresh && (
-          <div className="h-0.5 bg-background-secondary rounded-full mb-4 overflow-hidden">
-            <div
-              className="h-full bg-primary/40 transition-all duration-1000 ease-linear rounded-full"
-              style={{ width: `${((REFRESH_INTERVAL - countdown) / REFRESH_INTERVAL) * 100}%` }}
-            />
-          </div>
-        )}
-
         {/* Table */}
-        <ArenaCard className="animate-slide-up" style={{ animationDelay: "200ms" } as React.CSSProperties}>
+        <ArenaCard
+          className="animate-slide-up"
+          style={{ animationDelay: "200ms" } as React.CSSProperties}
+        >
           <ArenaCardContent className="p-0">
-            {filteredLeaderboard.length === 0 ? (
+            {leaderboardLoading ? (
+              <div className="p-6">
+                <Skeleton className="h-64 w-full" />
+              </div>
+            ) : filteredLeaderboard.length === 0 ? (
               <div className="py-16 text-center">
                 <Users size={48} className="mx-auto mb-4 text-muted-foreground/50" />
                 <h3 className="text-lg font-medium text-foreground mb-2">
-                  {searchQuery || statusFilter !== "all" ? "No matching participants" : "No Participants Yet"}
+                  {searchQuery || statusFilter !== "all"
+                    ? "No matching participants"
+                    : "No Participants Yet"}
                 </h3>
                 <p className="text-muted-foreground text-sm">
-                  {searchQuery ? "Try a different search term" : "Students will appear here once they join"}
+                  {searchQuery
+                    ? "Try a different search term"
+                    : "Students will appear here once they join"}
                 </p>
               </div>
             ) : (
-              <div className="overflow-x-auto">
+              <div
+                ref={tableScrollRef}
+                className="overflow-x-auto"
+                style={shouldVirtualize ? { height: "calc(100vh - 360px)", overflowY: "auto" } : undefined}
+              >
                 <Table>
                   <TableHeader>
                     <TableRow className="border-b-2 border-border">
@@ -489,82 +501,144 @@ export default function ContestLeaderboard() {
                       <TableHead className="sticky top-0 bg-card">Username</TableHead>
                       <TableHead className="text-center sticky top-0 bg-card">Score</TableHead>
                       <TableHead className="text-center sticky top-0 bg-card">Solved</TableHead>
+                      <TableHead className="text-center sticky top-0 bg-card">Partial</TableHead>
                       <TableHead className="text-center sticky top-0 bg-card">Wrong</TableHead>
                       <TableHead className="text-center sticky top-0 bg-card">Time</TableHead>
                       <TableHead className="text-center sticky top-0 bg-card">Warnings</TableHead>
                       <TableHead className="text-center sticky top-0 bg-card">Status</TableHead>
-                      <TableHead className="text-center sticky top-0 bg-card w-28">Actions</TableHead>
+                      <TableHead className="text-center sticky top-0 bg-card w-28">
+                        Actions
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredLeaderboard.map((entry, idx) => {
-                      const change = rankChanges.get(entry.session_id);
-                      const isUpdated = recentlyUpdated.has(entry.session_id);
+                    {(() => {
+                      const virtualItems = shouldVirtualize ? rowVirtualizer.getVirtualItems() : null;
+                      const totalSize = shouldVirtualize ? rowVirtualizer.getTotalSize() : 0;
+                      const paddingTop = virtualItems?.length ? virtualItems[0].start : 0;
+                      const paddingBottom = virtualItems?.length
+                        ? totalSize - virtualItems[virtualItems.length - 1].end
+                        : 0;
+                      const items = shouldVirtualize
+                        ? virtualItems!.map((v) => ({ entry: filteredLeaderboard[v.index], idx: v.index }))
+                        : filteredLeaderboard.map((entry, idx) => ({ entry, idx }));
 
                       return (
-                        <TableRow
-                          key={entry.session_id}
-                          className={`transition-all duration-300 ${getRankRowClass(entry, isUpdated)}`}
-                          style={{ animationDelay: `${idx * 20}ms` } as React.CSSProperties}
-                        >
-                          <TableCell className="text-center font-mono">
-                            {getRankDisplay(entry.rank, entry.problems_solved)}
-                          </TableCell>
-                          <TableCell className="text-center px-1">
-                            {getRankChangeIcon(change)}
-                          </TableCell>
-                          <TableCell className="font-medium">
-                            <span className={entry.is_disqualified ? "line-through text-muted-foreground" : ""}>
-                              {entry.username}
-                            </span>
-                          </TableCell>
-                          <TableCell className="text-center">
-                            <span className={`font-bold tabular-nums ${isUpdated && change && change.direction === "up" ? "text-success" : "text-primary"}`}>
-                              {entry.total_score}
-                            </span>
-                          </TableCell>
-                          <TableCell className="text-center tabular-nums">{entry.problems_solved}</TableCell>
-                          <TableCell className="text-center tabular-nums">
-                            <span className={entry.wrong_attempts > 0 ? "text-destructive" : "text-muted-foreground"}>
-                              {entry.wrong_attempts > 0 ? entry.wrong_attempts : "—"}
-                            </span>
-                          </TableCell>
-                          <TableCell className="text-center text-muted-foreground">
-                            <div className="flex items-center justify-center gap-1 text-xs font-mono tabular-nums">
-                              <Clock size={11} />
-                              {formatTime(entry.total_time_seconds)}
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-center">
-                            <span className={`tabular-nums ${getWarningColor(entry.warnings)}`}>
-                              {entry.warnings}
-                              <span className="text-muted-foreground text-[10px]">/15</span>
-                            </span>
-                          </TableCell>
-                          <TableCell className="text-center text-xs">
-                            {getStatusIndicator(entry)}
-                          </TableCell>
-                          <TableCell className="text-center">
-                            <div className="flex items-center justify-center gap-1">
-                              <AddWarningDialog
-                                sessionId={entry.session_id}
-                                username={entry.username}
-                                currentWarnings={entry.warnings}
-                                isDisqualified={entry.is_disqualified}
-                                onWarningAdded={() => fetchLeaderboard(false)}
-                              />
-                              <ResetWarningsDialog
-                                sessionId={entry.session_id}
-                                username={entry.username}
-                                currentWarnings={entry.warnings}
-                                isDisqualified={entry.is_disqualified}
-                                onWarningsReset={() => fetchLeaderboard(false)}
-                              />
-                            </div>
-                          </TableCell>
-                        </TableRow>
+                        <>
+                          {paddingTop > 0 && (
+                            <TableRow style={{ height: `${paddingTop}px` }}>
+                              <TableCell colSpan={11} className="p-0 border-0" />
+                            </TableRow>
+                          )}
+                          {items.map(({ entry, idx }) => {
+                            const change = rankChanges.get(entry.session_id);
+                            const isUpdated = recentlyUpdated.has(entry.session_id);
+
+                            return (
+                              <TableRow
+                                key={entry.session_id}
+                                className={`transition-all duration-300 ${getRankRowClass(entry, isUpdated)}`}
+                                style={{ animationDelay: `${idx * 20}ms` } as React.CSSProperties}
+                              >
+                                <TableCell className="text-center font-mono">
+                                  {getRankDisplay(entry.rank, entry.problems_solved)}
+                                </TableCell>
+                                <TableCell className="text-center px-1">
+                                  {getRankChangeIcon(change, entry.rank)}
+                                </TableCell>
+                                <TableCell className="font-medium">
+                                  <span
+                                    className={
+                                      entry.is_disqualified ? "line-through text-muted-foreground" : ""
+                                    }
+                                  >
+                                    {entry.username}
+                                  </span>
+                                </TableCell>
+                                <TableCell className="text-center">
+                                  <span
+                                    className={`font-bold tabular-nums ${
+                                      isUpdated && change?.direction === "up"
+                                        ? "text-success"
+                                        : "text-primary"
+                                    }`}
+                                  >
+                                    {entry.total_score}
+                                  </span>
+                                </TableCell>
+                                <TableCell className="text-center tabular-nums">
+                                  {entry.problems_solved}
+                                </TableCell>
+                                <TableCell className="text-center tabular-nums">
+                                  <span
+                                    className={
+                                      entry.problems_partially_solved > 0
+                                        ? "text-warning font-medium"
+                                        : "text-muted-foreground"
+                                    }
+                                  >
+                                    {entry.problems_partially_solved > 0
+                                      ? entry.problems_partially_solved
+                                      : "—"}
+                                  </span>
+                                </TableCell>
+                                <TableCell className="text-center tabular-nums">
+                                  <span
+                                    className={
+                                      entry.wrong_attempts > 0
+                                        ? "text-destructive"
+                                        : "text-muted-foreground"
+                                    }
+                                  >
+                                    {entry.wrong_attempts > 0 ? entry.wrong_attempts : "—"}
+                                  </span>
+                                </TableCell>
+                                <TableCell className="text-center text-muted-foreground">
+                                  <div className="flex items-center justify-center gap-1 text-xs font-mono tabular-nums">
+                                    <Clock size={11} />
+                                    {formatTime(entry.total_time_seconds)}
+                                  </div>
+                                </TableCell>
+                                <TableCell className="text-center">
+                                  <span
+                                    className={`tabular-nums ${getWarningColor(entry.warnings)}`}
+                                  >
+                                    {entry.warnings}
+                                    <span className="text-muted-foreground text-[10px]">/15</span>
+                                  </span>
+                                </TableCell>
+                                <TableCell className="text-center text-xs">
+                                  {getStatusIndicator(entry)}
+                                </TableCell>
+                                <TableCell className="text-center">
+                                  <div className="flex items-center justify-center gap-1">
+                                    <AddWarningDialog
+                                      sessionId={entry.session_id}
+                                      username={entry.username}
+                                      currentWarnings={entry.warnings}
+                                      isDisqualified={entry.is_disqualified}
+                                      onWarningAdded={hookManualRefresh}
+                                    />
+                                    <ResetWarningsDialog
+                                      sessionId={entry.session_id}
+                                      username={entry.username}
+                                      currentWarnings={entry.warnings}
+                                      isDisqualified={entry.is_disqualified}
+                                      onWarningsReset={hookManualRefresh}
+                                    />
+                                  </div>
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                          {paddingBottom > 0 && (
+                            <TableRow style={{ height: `${paddingBottom}px` }}>
+                              <TableCell colSpan={11} className="p-0 border-0" />
+                            </TableRow>
+                          )}
+                        </>
                       );
-                    })}
+                    })()}
                   </TableBody>
                 </Table>
               </div>
@@ -579,8 +653,12 @@ export default function ContestLeaderboard() {
           </span>
           <div className="flex items-center gap-4">
             <span className="flex items-center gap-1.5">🥇🥈🥉 Top 3 highlighted</span>
-            <span className="flex items-center gap-1.5"><TrendingUp size={11} className="text-success" /> Rank improved</span>
-            <span className="flex items-center gap-1.5"><TrendingDown size={11} className="text-destructive" /> Rank dropped</span>
+            <span className="flex items-center gap-1.5">
+              <TrendingUp size={11} className="text-success" /> Rank improved
+            </span>
+            <span className="flex items-center gap-1.5">
+              <TrendingDown size={11} className="text-destructive" /> Rank dropped
+            </span>
           </div>
         </div>
       </main>
