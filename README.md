@@ -1,73 +1,130 @@
-# Welcome to your Lovable project
+# CodeSangam Arena
 
-## Project info
+A competitive coding contest platform built for colleges and coding clubs. Students join contests, solve problems in a Monaco-powered editor, and compete on a live leaderboard — all without requiring an account.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+---
 
-## How can I edit this code?
+## Features
 
-There are several ways of editing your application.
+### 1. Custom Test Cases
+- Students can write, save, and run their own test inputs directly from the coding page
+- Saved tests persist across sessions (stored in DB per student + problem)
+- Custom runs do **not** count toward the execution quota
+- Full CRUD — add, edit, delete test cases from a dedicated panel
 
-**Use Lovable**
+### 2. Real-Time Leaderboard
+- Live rank updates using Supabase Realtime — no polling, event-driven via DB triggers
+- Each contest page only receives events for its own contest (filtered subscription)
+- Rank-change animations (up/down indicators) with auto-clear after 3s
+- Admin leaderboard shows disqualification/warning toasts in real time
+- 60s safety-net poll as fallback for missed events during network drops
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+### 3. Keyboard Shortcuts System
+- Global shortcuts: `Ctrl+R` run, `Ctrl+Enter` submit, `Ctrl+S` save, `Alt+1–9` navigate problems, `?` open shortcuts modal
+- Monaco-aware: shortcuts registered via `editor.addCommand` to avoid conflicts
+- Floating key-press indicator (bottom-right, auto-dismisses after 2.8s)
+- Searchable shortcuts modal with category tabs
 
-Changes made via Lovable will be committed automatically to this repo.
+### 4. UI/UX Overhaul
+- Custom Monaco `arena-dark` theme (One Dark Pro)
+- Mobile-first tabbed layout in the problem solver
+- Skeleton shimmer loaders, CSS-only animations (no framer-motion)
+- Virtualized leaderboard rows for contests with 50+ participants
+- Full accessibility: skip-to-content links, `aria-live` regions, focus management
+- `ErrorBoundary` per route with auto-reset on navigation
 
-**Use your preferred IDE**
+### 5. Enhanced Anti-Cheat
+- Detects: tab switch, window blur, Meta/Windows key, PrintScreen, virtual desktop switching (`Ctrl+Win+Arrow`)
+- `document.mouseleave` detection for cursor leaving browser window
+- 600ms debounce to avoid double-trigger on Alt+Tab with `visibilitychange`
+- Transient violation warning banner (4s auto-dismiss, shake animation)
+- Unified with existing warning/disqualification flow — no state duplication
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+### 6. Post-Contest PDF Reports (Admin)
+- Auto-generated 5-page PDF: Cover, Summary, Problem Analytics, Leaderboard, Anti-Cheat stats
+- Downloadable from the admin contest leaderboard page
+- Code-split via `React.lazy` — ~1.3MB PDF renderer only loads on the report page
+- Includes solve rates, average scores, warning/disqualification counts
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+---
 
-Follow these steps:
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | React 18, TypeScript, Vite 5 |
+| Styling | Tailwind CSS, shadcn/ui (Radix UI) |
+| Code Editor | Monaco Editor (`@monaco-editor/react`) |
+| Backend | Supabase (PostgreSQL + Edge Functions w/ Deno) |
+| Code Execution | Judge0 (primary) → Piston (fallback) |
+| State Management | Zustand (`subscribeWithSelector`) |
+| Data Fetching | TanStack Query v5 |
+| PDF Generation | `@react-pdf/renderer` v3.4 |
+| Notifications | Sonner |
+
+---
+
+## Architecture Notes
+
+- **No auth for students** — sessions are anonymous, identified by a `sessionId` UUID in `localStorage`
+- **Edge functions** use the Supabase service role key to bypass RLS (students have no `auth.uid()`)
+- **Admins** use Supabase Auth + `user_roles` table with an `app_role` enum
+- **Code execution** is abstracted in `execution_controller.ts` with automatic Judge0 → Piston fallback
+
+---
+
+## Getting Started
 
 ```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+# Clone the repo
+git clone https://github.com/shubodh007/CodeSangam-Arena.git
+cd CodeSangam-Arena
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+# Install dependencies
+npm install
 
-# Step 3: Install the necessary dependencies.
-npm i
+# Set up environment variables
+cp .env.example .env
+# Fill in your Supabase URL, anon key, and Judge0 API key
 
-# Step 4: Start the development server with auto-reloading and an instant preview.
+# Start the dev server
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+### Environment Variables
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+```env
+VITE_SUPABASE_URL=your_supabase_project_url
+VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+```
 
-**Use GitHub Codespaces**
+### Supabase Setup
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+1. Create a Supabase project
+2. Run all migrations in `supabase/migrations/` in order
+3. Deploy edge functions: `supabase functions deploy execute-code`
+4. Enable Realtime on the `leaderboard_events` table
 
-## What technologies are used for this project?
+---
 
-This project is built with:
+## Project Structure
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+```
+src/
+├── components/        # UI components (leaderboard, feedback, landing, etc.)
+├── hooks/             # Custom React hooks
+├── lib/               # Utilities (Monaco theme, anti-cheat helpers)
+├── pages/             # Route-level page components
+│   ├── admin/         # Admin contest management, leaderboard, reports
+│   └── contest/       # Student-facing contest and problem pages
+├── store/             # Zustand stores (leaderboard, keyboard shortcuts)
+├── types/             # Shared TypeScript types
+└── integrations/
+    └── supabase/      # Auto-generated Supabase client + DB types
 
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+supabase/
+├── functions/         # Deno edge functions
+│   ├── execute-code/  # Unified code execution (run, submit, custom tests)
+│   └── admin-submissions/
+└── migrations/        # PostgreSQL migrations
+```
