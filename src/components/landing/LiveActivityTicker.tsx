@@ -84,13 +84,12 @@ function EventPill({ icon: Icon, iconColor, text, time }: ActivityEvent) {
  */
 export function LiveActivityTicker() {
   return (
-    <section className="py-10 border-y border-border/40 bg-background-secondary/10 overflow-hidden" aria-label="Recent platform activity">
+    <section className="py-10 border-y border-border/40 bg-background-secondary/10 overflow-hidden" aria-label="Platform activity highlights">
       {/* Label */}
       <div className="container mx-auto px-6 mb-4">
         <div className="flex items-center gap-2">
-          <div className="h-2 w-2 rounded-full bg-success animate-pulse" />
           <span className="text-xs font-medium text-muted-foreground uppercase tracking-widest">
-            Live Activity
+            Platform Highlights
           </span>
         </div>
       </div>

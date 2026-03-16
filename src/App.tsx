@@ -17,6 +17,7 @@ const EditContest = lazy(() => import("./pages/admin/EditContest"));
 const ContestLeaderboard = lazy(() => import("./pages/admin/ContestLeaderboard"));
 const SubmissionsList = lazy(() => import("./pages/admin/SubmissionsList"));
 const ContestReport = lazy(() => import("./pages/admin/ContestReport"));
+const ContestMonitor = lazy(() => import("./pages/admin/ContestMonitor"));
 const StudentEntry = lazy(() => import("./pages/student/StudentEntry"));
 const ContestPage = lazy(() => import("./pages/contest/ContestPage"));
 const ProblemSolver = lazy(() => import("./pages/contest/ProblemSolver"));
@@ -59,6 +60,7 @@ const App = () => (
               <Route path="/admin/contest/:contestId/leaderboard" element={<ErrorBoundary context="AdminLeaderboard"><ContestLeaderboard /></ErrorBoundary>} />
               <Route path="/admin/contest/:contestId/submissions" element={<ErrorBoundary context="Submissions"><SubmissionsList /></ErrorBoundary>} />
               <Route path="/admin/contest/:contestId/report" element={<ErrorBoundary context="ContestReport"><ContestReport /></ErrorBoundary>} />
+              <Route path="/admin/contest/:contestId/monitor" element={<ErrorBoundary context="ContestMonitor"><ContestMonitor /></ErrorBoundary>} />
               <Route path="/student/entry" element={<ErrorBoundary context="StudentEntry"><StudentEntry /></ErrorBoundary>} />
               <Route path="/contest/:contestId" element={<ErrorBoundary context="ContestPage"><ContestPage /></ErrorBoundary>} />
               <Route path="/contest/:contestId/problem/:problemId" element={<ErrorBoundary context="ProblemSolver"><ProblemSolver /></ErrorBoundary>} />

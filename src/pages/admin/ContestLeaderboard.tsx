@@ -38,6 +38,7 @@ import {
   FileText,
   Wifi,
   WifiOff,
+  Activity,
 } from "lucide-react";
 
 interface Contest {
@@ -367,6 +368,17 @@ export default function ContestLeaderboard() {
             >
               <FileCode2 size={13} />
               Submissions
+            </Button>
+
+            {/* Live monitor */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigate(`/admin/contest/${contestId}/monitor`)}
+              className="gap-1.5 border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300"
+            >
+              <Activity size={13} />
+              Monitor
             </Button>
 
             {/* Generate PDF report */}

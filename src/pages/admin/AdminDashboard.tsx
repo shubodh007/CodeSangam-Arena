@@ -33,6 +33,8 @@ export default function AdminDashboard() {
   const { toast } = useToast();
   const [contests, setContests] = useState<Contest[]>([]);
   const [loading, setLoading] = useState(true);
+  const [totalProblems, setTotalProblems] = useState<number | null>(null);
+  const [activeStudents, setActiveStudents] = useState<number | null>(null);
 
   useEffect(() => {
     checkAuthAndFetch();
@@ -64,13 +66,30 @@ export default function AdminDashboard() {
 
   const fetchContests = async () => {
     try {
-      const { data, error } = await supabase
-        .from("contests")
-        .select("*")
-        .order("created_at", { ascending: false });
+      const [
+        { data, error },
+        { count: problemCount },
+        { data: activeContestIds },
+      ] = await Promise.all([
+        supabase.from("contests").select("*").order("created_at", { ascending: false }),
+        supabase.from("problems").select("*", { count: "exact", head: true }),
+        supabase.from("contests").select("id").eq("is_active", true),
+      ]);
 
       if (error) throw error;
       setContests(data || []);
+      setTotalProblems(problemCount ?? 0);
+
+      const ids = (activeContestIds || []).map((c) => c.id);
+      if (ids.length > 0) {
+        const { count: studentCount } = await supabase
+          .from("student_sessions")
+          .select("*", { count: "exact", head: true })
+          .in("contest_id", ids);
+        setActiveStudents(studentCount ?? 0);
+      } else {
+        setActiveStudents(0);
+      }
     } catch (err) {
       console.error("Error fetching contests:", err);
     } finally {
@@ -112,10 +131,10 @@ export default function AdminDashboard() {
   };
 
   const stats = [
-    { label: "Total Contests", value: contests.length, icon: Trophy, color: "bg-primary/10 text-primary" },
-    { label: "Active Contests", value: contests.filter(c => c.is_active).length, icon: Power, color: "bg-success/10 text-success" },
-    { label: "Total Problems", value: "—", icon: FileText, color: "bg-accent/10 text-accent" },
-    { label: "Active Students", value: "—", icon: Users, color: "bg-warning/10 text-warning" },
+    { label: "Total Contests", value: contests.length, icon: Trophy, color: "bg-primary/10 text-primary", loading: false },
+    { label: "Active Contests", value: contests.filter(c => c.is_active).length, icon: Power, color: "bg-success/10 text-success", loading: false },
+    { label: "Total Problems", value: totalProblems ?? 0, icon: FileText, color: "bg-accent/10 text-accent", loading: totalProblems === null },
+    { label: "Active Students", value: activeStudents ?? 0, icon: Users, color: "bg-warning/10 text-warning", loading: activeStudents === null },
   ];
 
   return (
@@ -150,7 +169,11 @@ export default function AdminDashboard() {
                   <stat.icon size={24} className={stat.color.split(" ")[1]} />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold text-foreground">{stat.value}</p>
+                  {stat.loading ? (
+                    <Skeleton className="h-7 w-12 mb-1" />
+                  ) : (
+                    <p className="text-2xl font-bold text-foreground">{stat.value}</p>
+                  )}
                   <p className="text-sm text-muted-foreground">{stat.label}</p>
                 </div>
               </ArenaCardContent>

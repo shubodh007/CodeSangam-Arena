@@ -14,7 +14,8 @@ import {
   FileText,
   Clock,
   AlertCircle,
-  GripVertical,
+  ArrowUp,
+  ArrowDown,
   ChevronDown,
   ChevronUp,
   Eye,
@@ -64,6 +65,15 @@ export default function CreateContest() {
 
   const removeProblem = (id: string) => {
     setProblems(problems.filter(p => p.id !== id));
+  };
+
+  const moveProblem = (id: string, dir: 1 | -1) => {
+    const idx = problems.findIndex(p => p.id === id);
+    const next = idx + dir;
+    if (next < 0 || next >= problems.length) return;
+    const reordered = [...problems];
+    [reordered[idx], reordered[next]] = [reordered[next], reordered[idx]];
+    setProblems(reordered);
   };
 
   const addSampleTestCase = (problemId: string) => {
@@ -320,11 +330,32 @@ export default function CreateContest() {
             {problems.map((problem, index) => (
               <ArenaCard key={problem.id}>
                 <ArenaCardHeader className="flex flex-row items-center justify-between">
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-muted-foreground"
+                      disabled={index === 0}
+                      onClick={() => moveProblem(problem.id, -1)}
+                      title="Move up"
+                    >
+                      <ArrowUp size={14} />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-muted-foreground"
+                      disabled={index === problems.length - 1}
+                      onClick={() => moveProblem(problem.id, 1)}
+                      title="Move down"
+                    >
+                      <ArrowDown size={14} />
+                    </Button>
+                  </div>
                   <button
                     onClick={() => updateProblem(problem.id, { isExpanded: !problem.isExpanded })}
-                    className="flex items-center gap-3 flex-1 text-left"
+                    className="flex items-center gap-3 flex-1 text-left ml-1"
                   >
-                    <GripVertical size={16} className="text-muted-foreground" />
                     <span className="font-medium">
                       Problem {index + 1}: {problem.title || "Untitled"}
                     </span>

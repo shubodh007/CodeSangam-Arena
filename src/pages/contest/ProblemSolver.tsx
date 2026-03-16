@@ -178,12 +178,46 @@ export default function ProblemSolver() {
     }
   }, [realtimeContest]);
 
+  // ── Heartbeat: tell the admin monitor we are online & what problem we're on ──
+  const sendHeartbeat = useCallback((sid: string, pid: string, typing: boolean) => {
+    supabase.functions.invoke("execute-code", {
+      body: { mode: "heartbeat", sessionId: sid, currentProblemId: pid, isTyping: typing },
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!session?.sessionId || !problemId) return;
+    // Send an immediate ping so admin sees the student without waiting 30 s
+    sendHeartbeat(session.sessionId, problemId, false);
+    heartbeatIntervalRef.current = setInterval(() => {
+      sendHeartbeat(session.sessionId!, problemId!, isTypingRef.current);
+    }, 30_000);
+    return () => {
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+      if (heartbeatIntervalRef.current) clearInterval(heartbeatIntervalRef.current);
+    };
+  }, [session?.sessionId, problemId, sendHeartbeat]);
+
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
 
   // Stable refs for Monaco command callbacks (avoids re-registration on every render)
   const handleRunRef    = useRef<() => void>(() => {});
   const handleSubmitRef = useRef<() => void>(() => {});
   const handleSaveRef   = useRef<() => void>(() => {});
+
+  // Heartbeat / typing-presence refs
+  const isTypingRef           = useRef(false);
+  const typingTimeoutRef      = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const heartbeatIntervalRef  = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const handleEditorChange = (value: string | undefined) => {
+    setCode(value || "");
+    isTypingRef.current = true;
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    typingTimeoutRef.current = setTimeout(() => {
+      isTypingRef.current = false;
+    }, 5_000);
+  };
 
   const handleEditorMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
@@ -785,7 +819,7 @@ export default function ProblemSolver() {
           height="100%"
           language={selectedLanguage.monaco}
           value={code}
-          onChange={(value) => setCode(value || "")}
+          onChange={handleEditorChange}
           onMount={handleEditorMount}
           theme="arena-dark"
           options={{

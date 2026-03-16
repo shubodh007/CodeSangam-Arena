@@ -59,9 +59,13 @@ interface ExecuteRequest {
     | "custom-test"
     | "load-custom-tests"
     | "save-custom-tests"
-    | "delete-custom-test";
+    | "delete-custom-test"
+    | "heartbeat";
   sessionId?: string;
   problemId?: string;
+  // heartbeat fields
+  isTyping?: boolean;
+  currentProblemId?: string | null;
   // custom-test fields
   customInputs?: Array<{ input: string; expectedOutput?: string }>;
   // save-custom-tests fields
@@ -183,6 +187,25 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    // ── HEARTBEAT ────────────────────────────────────────────────────────────
+    // Light-weight presence ping sent every 30 s from ProblemSolver.
+    // Updates last_active_at, current_problem_id, is_typing — no code execution.
+    if (mode === "heartbeat") {
+      const sv = await validateSessionLight(supabase, sessionId);
+      if (!sv.valid) return jsonResponse({ success: false, error: sv.error }, 403);
+
+      await supabase
+        .from("student_sessions")
+        .update({
+          last_active_at: new Date().toISOString(),
+          current_problem_id: body.currentProblemId ?? null,
+          is_typing: body.isTyping ?? false,
+        })
+        .eq("id", sessionId);
+
+      return jsonResponse({ success: true });
+    }
 
     // ── CUSTOM TEST – LOAD ───────────────────────────────────────────────────
     if (mode === "load-custom-tests") {

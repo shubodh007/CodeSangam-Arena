@@ -23,14 +23,14 @@ const STATS: StatItem[] = [
   },
   {
     icon: Code2,
-    value: 10,
+    value: 5,
     suffix: "",
     label: "Languages supported",
   },
   {
     icon: Zap,
-    value: 999,
-    suffix: "%",
+    value: 99,
+    suffix: ".9%",
     label: "Platform uptime",
   },
   {
